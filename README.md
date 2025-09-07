@@ -1,6 +1,6 @@
 # Load Testing Framework with k6
 
-I built this repository to demonstrate a production‑ready load testing framework using k6. It allows me to define performance, stress and scalability tests for public APIs and run them locally or in CI/CD pipelines with Docker.
+I built this repository to demonstrate a production‑ready load testing framework using k6. It allows me to define performance, stress and scalability tests for public APIs and run them locally or in CI/CD pipelines with Docker with GitHub Actions CI.
 
 ## Features
 
