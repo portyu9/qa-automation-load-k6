@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Prepare report directory
         run: mkdir -p reports
       - name: Run pinned k6 smoke gate
@@ -36,7 +36,7 @@ jobs:
           run tests/smoke.js
       - name: Upload k6 summary
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: k6-smoke-summary
           path: reports/
