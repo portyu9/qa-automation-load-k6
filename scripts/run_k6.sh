@@ -12,10 +12,17 @@ case "$PROFILE" in
     ;;
 esac
 
-if [[ "$PROFILE" != "smoke" && "${K6_ALLOW_LOAD_TEST:-}" != "true" ]]; then
-  echo "Refusing to run $PROFILE without K6_ALLOW_LOAD_TEST=true." >&2
-  echo "Set it only when K6_BASE_URL points to a target authorized for performance testing." >&2
-  exit 3
+if [[ "$PROFILE" != "smoke" ]]; then
+  if [[ "${K6_ALLOW_LOAD_TEST:-}" != "true" ]]; then
+    echo "Refusing to run $PROFILE without K6_ALLOW_LOAD_TEST=true." >&2
+    exit 3
+  fi
+
+  if [[ -z "${K6_ALLOWED_HOSTS:-}" ]]; then
+    echo "Refusing to run $PROFILE without K6_ALLOWED_HOSTS." >&2
+    echo "List the exact authorized target hostname; the k6 runtime verifies the match." >&2
+    exit 4
+  fi
 fi
 
 if ! command -v k6 >/dev/null 2>&1; then

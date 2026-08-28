@@ -2,6 +2,7 @@ import { sleep } from 'k6';
 import { config, requireLoadAuthorization } from '../lib/config.js';
 import { getJson } from '../lib/client.js';
 import { handleSummary } from '../lib/summary.js';
+import { sloThresholds } from '../lib/thresholds.js';
 
 requireLoadAuthorization('stress profile');
 export { handleSummary };
@@ -24,12 +25,12 @@ export const options = {
       tags: { profile: 'stress' },
     },
   },
-  thresholds: {
-    checks: ['rate>0.97'],
-    http_req_failed: ['rate<0.03'],
-    http_req_duration: [`p(95)<${Math.max(config.p95Ms * 2, 1000)}`],
-    business_failures: ['rate<0.03'],
-  },
+  thresholds: sloThresholds({
+    checksRate: 0.97,
+    errorRate: 0.03,
+    p95Ms: Math.max(config.p95Ms * 2, 1000),
+    includeDroppedIterations: false,
+  }),
 };
 
 export default function () {
