@@ -18,7 +18,58 @@ env:
   K6_RUN_ID: gha-${{ github.run_id }}-${{ github.run_attempt }}
 
 jobs:
+  guardrails:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Validate shell refusal contract
+        run: bash scripts/test_guardrails.sh
+      - name: Validate k6 runtime refusal contract without sending traffic
+        run: |
+          set -euo pipefail
+          common=(
+            --rm
+            -e K6_BASE_URL
+            -e K6_RUN_ID
+            -v "${PWD}:/src"
+            -w /src
+            grafana/k6:2.2.0
+            inspect tests/load.js
+          )
+
+          if docker run "${common[@]}" >/dev/null 2>&1; then
+            echo "load profile unexpectedly initialized without K6_ALLOW_LOAD_TEST" >&2
+            exit 1
+          fi
+
+          if docker run \
+            --rm \
+            -e K6_BASE_URL \
+            -e K6_RUN_ID \
+            -e K6_ALLOW_LOAD_TEST=true \
+            -e K6_ALLOWED_HOSTS=example.invalid \
+            -v "${PWD}:/src" \
+            -w /src \
+            grafana/k6:2.2.0 \
+            inspect tests/load.js >/dev/null 2>&1; then
+            echo "load profile unexpectedly initialized for a non-allowlisted host" >&2
+            exit 1
+          fi
+
+          docker run \
+            --rm \
+            -e K6_BASE_URL \
+            -e K6_RUN_ID \
+            -e K6_ALLOW_LOAD_TEST=true \
+            -e K6_ALLOWED_HOSTS=jsonplaceholder.typicode.com \
+            -v "${PWD}:/src" \
+            -w /src \
+            grafana/k6:2.2.0 \
+            inspect tests/load.js >/dev/null
+
   smoke:
+    needs: guardrails
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
