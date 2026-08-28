@@ -57,6 +57,34 @@ jobs:
             exit 1
           fi
 
+          if docker run \
+            --rm \
+            -e K6_BASE_URL=https://user:password@jsonplaceholder.typicode.com \
+            -e K6_RUN_ID \
+            -e K6_ALLOW_LOAD_TEST=true \
+            -e K6_ALLOWED_HOSTS=jsonplaceholder.typicode.com \
+            -v "${PWD}:/src" \
+            -w /src \
+            grafana/k6:2.2.0 \
+            inspect tests/load.js >/dev/null 2>&1; then
+            echo "load profile unexpectedly accepted URL credentials" >&2
+            exit 1
+          fi
+
+          if docker run \
+            --rm \
+            -e K6_BASE_URL='https://jsonplaceholder.typicode.com?token=secret' \
+            -e K6_RUN_ID \
+            -e K6_ALLOW_LOAD_TEST=true \
+            -e K6_ALLOWED_HOSTS=jsonplaceholder.typicode.com \
+            -v "${PWD}:/src" \
+            -w /src \
+            grafana/k6:2.2.0 \
+            inspect tests/load.js >/dev/null 2>&1; then
+            echo "load profile unexpectedly accepted a query-bearing base URL" >&2
+            exit 1
+          fi
+
           docker run \
             --rm \
             -e K6_BASE_URL \
