@@ -30,7 +30,7 @@ assert_refused() {
 
 assert_refused 3 env -u K6_ALLOW_LOAD_TEST -u K6_ALLOWED_HOSTS \
   "$ROOT/scripts/run_k6.sh" load
-assert_refused 4 env K6_ALLOW_LOAD_TEST=true -u K6_ALLOWED_HOSTS \
+assert_refused 4 env -u K6_ALLOWED_HOSTS K6_ALLOW_LOAD_TEST=true \
   "$ROOT/scripts/run_k6.sh" load
 
 K6_ALLOW_LOAD_TEST=true \
