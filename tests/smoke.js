@@ -2,6 +2,7 @@ import { sleep } from 'k6';
 import { config } from '../lib/config.js';
 import { getJson } from '../lib/client.js';
 import { handleSummary } from '../lib/summary.js';
+import { sloThresholds } from '../lib/thresholds.js';
 
 export { handleSummary };
 
@@ -16,11 +17,13 @@ export const options = {
       tags: { profile: 'smoke' },
     },
   },
-  thresholds: {
-    checks: ['rate>0.99'],
-    http_req_failed: [`rate<${config.errorRate}`],
-    http_req_duration: [`p(95)<${Math.max(config.p95Ms, 1000)}`],
-  },
+  thresholds: sloThresholds({
+    checksRate: 0.99,
+    errorRate: config.errorRate,
+    p95Ms: Math.max(config.p95Ms, 1000),
+    includeBusinessFailures: false,
+    includeDroppedIterations: false,
+  }),
 };
 
 export default function () {
