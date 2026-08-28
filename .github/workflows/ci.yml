@@ -1,33 +1,44 @@
-name: CI for k6 tests
+name: ci
 
 on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: k6-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  K6_BASE_URL: https://jsonplaceholder.typicode.com
+  K6_RUN_ID: gha-${{ github.run_id }}-${{ github.run_attempt }}
 
 jobs:
-  k6-tests:
+  smoke:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
-
-      - name: Install k6
-        run: |
-          #sudoapt-get install -y k6
-
-          sudo apt-get update
-          sudo apt-get install -y ca-certificates gnupg curl
-          sudo mkdir -p /etc/apt/keyrings
-          curl -fsSL https://dl.k6.io/key.gpg | sudo gpg --dearmor -o /etc/apt/keyrings/k6-archive-keyring.gpg
-          echo "deb [signed-by=/etc/apt/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
-          sudo apt-get update
-          sudo apt-get install -y k6
-      - name: Run smoke test
-        run: |
-          k6 run tests/smoke.js
-
-      - name: Run load test
-        run: |
-          k6 run tests/load.js
+      - uses: actions/checkout@v4
+      - name: Prepare report directory
+        run: mkdir -p reports
+      - name: Run pinned k6 smoke gate
+        run: >-
+          docker run --rm
+          -e K6_BASE_URL
+          -e K6_RUN_ID
+          -v "${PWD}:/src"
+          -w /src
+          grafana/k6:2.2.0
+          run tests/smoke.js
+      - name: Upload k6 summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: k6-smoke-summary
+          path: reports/
+          if-no-files-found: ignore
+          retention-days: 14

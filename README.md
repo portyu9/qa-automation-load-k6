@@ -1,66 +1,118 @@
-# Load Testing Framework with k6
+# k6 Performance Test Framework
 
-I built this repository to demonstrate a production‑ready load testing framework using k6. It allows me to define performance, stress and scalability tests for public APIs and run them locally or in CI/CD pipelines with Docker with GitHub Actions CI.
+A Grafana k6 framework for smoke, load, stress, and soak testing with explicit workload models, SLO-style thresholds, endpoint tags, custom business metrics, machine-readable summaries, and safeguards against accidental sustained traffic.
 
-## Features
+## Baseline
 
-- **k6 test scripts** – Test scripts in the `tests/` directory cover smoke, load and stress scenarios against real APIs such as JSONPlaceholder. I define thresholds and checks to ensure service level objectives are met.
-- **Docker integration** – A `Dockerfile` lets me run tests in a containerised environment for consistency across development machines and CI.
-- **Scripts for local execution** – Shell scripts in `scripts/` streamline running tests with various parameters and output formats.
-- **CI pipeline** – The GitHub Actions workflow under `.github/workflows/ci.yml` executes k6 tests automatically on pushes and pull requests, uploading results as artifacts.
-- **Extensible structure** – I can add additional test scenarios, data files, or integrate results with Grafana/Loki for visualisation.
+- k6 2.2.0 official Docker image;
+- scenario executors instead of a single global `stages` block;
+- arrival-rate models for load/stress;
+- pass/fail thresholds on latency, failure rate, checks, business failures, and dropped iterations;
+- environment-driven targets and threshold values;
+- `X-Test-Run-Id` correlation header;
+- summary JSON retained by CI;
+- load/stress/soak opt-in safety control.
 
-## Getting started
+## Structure
 
-1. **Install k6** (optional)
-
-   If you want to run k6 locally without Docker, install it from [k6.io](https://k6.io/docs/getting-started/installation/).
-
-2. **Clone the repo**
-
-   ```bash
-   git clone https://github.com/portyu9/qa-automation-load-k6.git
-   cd qa-automation-load-k6
-   ```
-
-3. **Run smoke test**
-
-   Execute a quick smoke test against the JSONPlaceholder API to verify connectivity:
-
-   ```bash
-   k6 run tests/smoke.js
-   ```
-
-4. **Run load test with Docker**
-
-   Use the provided Dockerfile to build an image and run a load test:
-
-   ```bash
-   docker build -t k6-load .
-   docker run --rm -i k6-load run /src/tests/load.js
-   ```
-
-5. **CI execution**
-
-   On each push, GitHub Actions will run the test suite defined in `ci.yml`. Check the Actions tab for results.
-
-## Project structure
-
-```
-tests/
-├── smoke.js      # Lightweight smoke test
-└── load.js       # Load and stress test with thresholds
-
-docker/
-└── Dockerfile     # Container to run k6
-
-scripts/
-└── run_k6.sh      # Convenience script to run tests
-
-.github/workflows/
-└── ci.yml         # GitHub Actions workflow
-
-README.md          # This file
+```text
+.
+├── lib/
+│   ├── config.js
+│   ├── client.js
+│   ├── metrics.js
+│   └── summary.js
+├── tests/
+│   ├── smoke.js
+│   ├── load.js
+│   ├── stress.js
+│   └── soak.js
+├── scripts/run_k6.sh
+├── docker/Dockerfile
+├── docs/
+└── .github/workflows/ci.yml
 ```
 
-I plan to iterate on these tests, add more scenarios, and integrate with Grafana dashboards for rich metrics.
+## Safety requirement
+
+`smoke` is the only profile enabled by default. Before running `load`, `stress`, or `soak`, confirm the target is explicitly authorized for performance testing and then set:
+
+```bash
+export K6_BASE_URL=https://performance.example.internal
+export K6_ALLOW_LOAD_TEST=true
+```
+
+The flag is a guardrail; it is not a substitute for authorization, capacity coordination, or a test window.
+
+## Local execution
+
+With k6 installed:
+
+```bash
+./scripts/run_k6.sh smoke
+./scripts/run_k6.sh load       # requires K6_ALLOW_LOAD_TEST=true
+./scripts/run_k6.sh stress     # requires K6_ALLOW_LOAD_TEST=true
+./scripts/run_k6.sh soak       # requires K6_ALLOW_LOAD_TEST=true
+```
+
+Pinned Docker execution:
+
+```bash
+mkdir -p reports
+docker run --rm \
+  -e K6_BASE_URL \
+  -e K6_RUN_ID \
+  -e K6_ALLOW_LOAD_TEST \
+  -v "$PWD:/src" -w /src \
+  grafana/k6:2.2.0 run tests/smoke.js
+```
+
+## Configuration
+
+| Variable | Purpose | Default |
+| --- | --- | --- |
+| `K6_BASE_URL` | target base URL | JSONPlaceholder |
+| `K6_RUN_ID` | request correlation | generated timestamp |
+| `K6_P95_MS` | p95 latency threshold for load/soak | `500` |
+| `K6_ERROR_RATE` | max failure rate | `0.01` |
+| `K6_THINK_TIME_SECONDS` | pacing between iterations | `1` |
+| `K6_ALLOW_LOAD_TEST` | explicit sustained-load opt-in | unset/false |
+| `K6_SOAK_DURATION` | soak duration override | `10m` |
+| `K6_SOAK_RATE` | soak iterations per second | `5` |
+
+## Workload profiles
+
+### Smoke
+
+One VU performs three iterations to validate target reachability, checks, scripts, and report generation. This is the CI profile.
+
+### Load
+
+Uses `ramping-arrival-rate` to reach 5 then 10 iterations/second. Arrival-rate executors model incoming work independently from response latency; `dropped_iterations` is therefore a critical validity metric.
+
+### Stress
+
+Raises the requested arrival rate in steps and uses intentionally looser thresholds to observe degradation rather than claim normal-load SLO compliance.
+
+### Soak
+
+Uses a constant arrival rate for a configurable duration. A real soak window is normally much longer than the safe repository default and should run only in a controlled environment.
+
+## Metrics and thresholds
+
+Built-in `http_req_duration`, `http_req_failed`, `checks`, and `dropped_iterations` are combined with:
+
+- `business_failures` — rate of failed common semantic/protocol checks;
+- `business_duration` — endpoint-tagged response duration trend.
+
+Threshold failures produce a non-zero k6 exit code. Do not suppress that exit code in CI.
+
+## Tagging
+
+Requests use stable low-cardinality endpoint tags (`get_post`, `list_posts`). Do not tag metrics with GUIDs, user IDs, timestamps, or request IDs; high-cardinality metric labels create expensive and difficult-to-query time series. Use correlation headers/logs for per-request tracing.
+
+## CI
+
+GitHub Actions runs only the smoke profile in the pinned 2.2.0 container and uploads `reports/summary.json`. Sustained load is deliberately excluded from pull-request CI.
+
+See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and [`docs/TEST_STRATEGY.md`](docs/TEST_STRATEGY.md) for workload modeling, threshold, safety, and analysis guidance.

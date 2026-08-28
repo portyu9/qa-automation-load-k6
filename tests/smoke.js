@@ -1,23 +1,32 @@
-/**
- * Smoke test script for k6. I use this to perform a quick
- * sanity check against the JSONPlaceholder API, verifying that
- * a single post returns status 200 and has the expected id.
- */
+import { sleep } from 'k6';
+import { config } from '../lib/config.js';
+import { getJson } from '../lib/client.js';
+import { handleSummary } from '../lib/summary.js';
 
-import http from 'k6/http';
-import { check } from 'k6';
+export { handleSummary };
 
 export const options = {
-  vus: 1,
-  iterations: 1,
+  scenarios: {
+    smoke: {
+      executor: 'shared-iterations',
+      vus: 1,
+      iterations: 3,
+      maxDuration: '30s',
+      gracefulStop: '5s',
+      tags: { profile: 'smoke' },
+    },
+  },
+  thresholds: {
+    checks: ['rate>0.99'],
+    http_req_failed: [`rate<${config.errorRate}`],
+    http_req_duration: [`p(95)<${Math.max(config.p95Ms, 1000)}`],
+  },
 };
 
-const BASE_URL = 'https://jsonplaceholder.typicode.com';
-
 export default function () {
-  const res = http.get(`${BASE_URL}/posts/1`);
-  check(res, {
-    'status is 200': (r) => r.status === 200,
-    'post id is 1': (r) => JSON.parse(r.body).id === 1,
-  });
+  const { body } = getJson('/posts/1', 'get_post');
+  if (body && body.id !== 1) {
+    throw new Error(`unexpected post id: ${body.id}`);
+  }
+  sleep(0.2);
 }
