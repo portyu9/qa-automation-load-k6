@@ -1,33 +1,111 @@
 # Architecture
 
-## Layers
+## Design objective
 
-- **Scenario scripts** define workload shape and profile-specific thresholds.
-- **Client helpers** own request construction, safe headers, endpoint tags, and common checks.
-- **Configuration** validates environment-controlled target and SLO inputs in the init context.
-- **Custom metrics** expose business-oriented failure and duration signals alongside built-in HTTP metrics.
-- **Summary handling** writes machine-readable end-of-test evidence.
+The k6 framework separates **traffic shape**, **business/request helpers**, **quality thresholds**, **target authorization**, and **evidence** so changing one concern does not silently redefine the others.
 
-The framework does not hide k6 executors behind a generic abstraction. Workload shape is an essential part of a performance test and should remain visible in each profile.
+```mermaid
+flowchart LR
+    CLI[run_k6.sh / CI] --> CFG[lib/config.js]
+    CFG --> AUTH[Target authorization]
+    TEST[Scenario files] --> TH[lib/thresholds.js]
+    TEST --> CL[lib/client.js]
+    CL --> M[lib/metrics.js]
+    TEST --> K6[k6 runtime]
+    K6 --> TARGET[Validated target]
+    K6 --> SUM[lib/summary.js]
+    SUM --> REPORT[reports/summary.json]
+```
 
-## Safety boundary
+Traffic generation remains native k6. Shared modules centralize policy but do not create a second load-test DSL.
 
-Smoke is the only profile that runs without an explicit opt-in. `load`, `stress`, and `soak` throw during initialization unless `K6_ALLOW_LOAD_TEST=true`. This prevents a copied command or CI change from unintentionally producing sustained traffic against a shared/public target.
+## Target configuration
 
-Authorization for load testing is an operational prerequisite, not a code setting. The environment flag is a deliberate friction mechanism, not proof of authorization.
+`K6_BASE_URL` is validated during module initialization. It must:
 
-## Open workload model
+- be an absolute HTTP(S) URL;
+- contain no URL user-info/credentials;
+- contain no query string or fragment;
+- contain a syntactically valid hostname;
+- use a numeric port in the range 1–65535 when a port is present;
+- preserve optional path prefixes.
 
-Load and stress use `ramping-arrival-rate`, which schedules iteration starts independently of response time. This is useful when the requirement is throughput/arrival rate rather than “N concurrent virtual users.” Watch `dropped_iterations`: if VUs cannot sustain the scheduled rate, the workload generator is no longer delivering the intended model.
+The parsed target hostname is normalized and used for exact allowlist comparison.
 
-## Thresholds
+## Defense-in-depth authorization
 
-Thresholds are executable SLO-style acceptance criteria. They determine process exit status and therefore CI gate behavior. Built-in request failure/duration metrics are combined with custom business failure metrics so protocol success cannot hide failed semantic checks.
+Smoke is deliberately low-volume and does not require the sustained-load opt-in. `load`, `stress`, and `soak` are disabled unless **both** conditions hold:
 
-## Tags
+1. `K6_ALLOW_LOAD_TEST=true`;
+2. the exact parsed target hostname appears in `K6_ALLOWED_HOSTS`.
 
-Every request has an `endpoint` tag and each scenario has a `profile` tag. This enables per-endpoint/per-profile analysis in external outputs without creating high-cardinality tags such as user IDs or random request IDs.
+This policy exists twice on purpose:
 
-## Summary
+- `scripts/run_k6.sh` provides an early human-readable refusal for normal local use;
+- `requireLoadAuthorization()` in scenario code enforces the rule even when an operator bypasses the shell wrapper and invokes `k6 run` directly.
 
-`handleSummary()` writes `reports/summary.json`. In larger systems, stream time-series metrics to an approved backend (Prometheus remote write, Grafana Cloud, etc.) and keep the end summary as the CI artifact.
+The environment flag is only a friction/intent guardrail. It is not proof of legal/operational authorization; target ownership and change-control remain external responsibilities.
+
+## CI safety verification
+
+CI has a dedicated `guardrails` job before smoke execution.
+
+The shell contract uses a stub `k6` binary, so refusal behavior is tested with zero network traffic. CI also invokes `k6 inspect` against the load scenario to prove JavaScript initialization rejects:
+
+- missing sustained-load opt-in;
+- a target hostname absent from the allowlist;
+- URL credentials;
+- query-bearing base URLs.
+
+A matching allowlisted target must inspect successfully. Only after this guardrail job passes does the normal smoke job execute.
+
+`k6 inspect` evaluates scenario/options/module initialization without executing the configured traffic scenario, making it suitable for safety-policy verification.
+
+## Scenario model
+
+Scenario files own workload shape:
+
+- smoke → tiny shared-iteration correctness signal;
+- load → ramping arrival rate around an expected service region;
+- stress → increasing arrival rates beyond normal operating expectations;
+- soak → sustained constant arrival rate for time-dependent degradation.
+
+Arrival-rate executors describe requested throughput independently from virtual-user iteration speed. `preAllocatedVUs`/`maxVUs` are capacity to generate the requested schedule, not the performance objective itself.
+
+## Request/client boundary
+
+`lib/client.js` centralizes repeated HTTP behavior, request/run headers, endpoint tags, JSON/content-type checks, and custom metric updates. Scenario files should express user/traffic behavior rather than duplicate protocol boilerplate.
+
+Do not hide k6's HTTP API behind a large generic abstraction. Shared client helpers should represent stable service operations or common measurement policy.
+
+## Metrics and thresholds
+
+Built-in request/check metrics are augmented by named custom business metrics. Endpoint/scenario tags allow threshold/filter analysis without duplicating metric definitions.
+
+`lib/thresholds.js` is the single source for common threshold expressions. Profiles can supply deliberate overrides, but a threshold change should be visibly separated from traffic-shape changes.
+
+Important distinctions:
+
+- a threshold is a pass/fail SLO/assertion;
+- a stage/rate defines generated traffic;
+- VU capacity determines whether k6 can sustain that arrival schedule;
+- `dropped_iterations` indicates generator capacity/scheduling shortfall and must not be confused with server request failure.
+
+## Summary evidence
+
+`handleSummary()` emits a compact stdout line and `reports/summary.json`. The JSON includes key request/error/check/latency values, raw metric summaries, and explicit threshold-breach details.
+
+Threshold failures should be interpreted together with achieved request volume and dropped iterations. A p95 breach at a materially different achieved throughput than intended answers a different question from a p95 breach at the planned rate.
+
+## Extension rules
+
+New performance behavior should:
+
+1. preserve the target validation/authorization boundary;
+2. keep ordinary CI limited to low-volume smoke plus zero-traffic guardrail validation;
+3. choose an executor that matches the performance question;
+4. keep threshold policy centralized and reviewable;
+5. add endpoint/scenario tags before inventing duplicate metrics;
+6. distinguish generator saturation (`dropped_iterations`) from service failures;
+7. write machine-readable summary evidence;
+8. require explicit environment ownership/change control for sustained profiles.
