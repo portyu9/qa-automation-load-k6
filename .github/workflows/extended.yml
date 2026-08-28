@@ -1,0 +1,75 @@
+name: extended
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - "lib/**"
+      - "tests/**"
+      - "scripts/**"
+      - ".github/workflows/extended.yml"
+  schedule:
+    - cron: "23 8 * * 3"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: k6-extended-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sustained-profile-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [load, stress, soak]
+    env:
+      K6_BASE_URL: https://example.invalid
+      K6_RUN_ID: gha-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.profile }}
+      K6_ALLOW_LOAD_TEST: "true"
+      K6_ALLOWED_HOSTS: example.invalid
+    steps:
+      - uses: actions/checkout@v7
+      - name: Prepare evidence directory
+        run: mkdir -p reports
+      - name: Inspect ${{ matrix.profile }} profile without executing traffic
+        run: >-
+          docker run --rm
+          -e K6_BASE_URL
+          -e K6_RUN_ID
+          -e K6_ALLOW_LOAD_TEST
+          -e K6_ALLOWED_HOSTS
+          -v "${PWD}:/src"
+          -w /src
+          grafana/k6:2.2.0
+          inspect --include-system-env-vars tests/${{ matrix.profile }}.js
+          > reports/${{ matrix.profile }}-inspect.json
+      - name: Verify inspection evidence is non-empty
+        run: test -s reports/${{ matrix.profile }}-inspect.json
+      - name: Publish profile observability summary
+        if: always()
+        run: |
+          {
+            echo "### k6 · ${{ matrix.profile }} profile contract"
+            echo
+            echo "- Run ID: \`${K6_RUN_ID}\`"
+            echo '- Execution mode: `k6 inspect` (module/configuration initialization only)'
+            echo '- Target identity: `example.invalid` exact allowlist match'
+            echo '- Sustained scenario traffic: **not executed**'
+            echo "- Job status: \`${{ job.status }}\`"
+          } | tee reports/${{ matrix.profile }}-extended-summary.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload extended evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: k6-${{ matrix.profile }}-profile-contract
+          path: |
+            reports/${{ matrix.profile }}-inspect.json
+            reports/${{ matrix.profile }}-extended-summary.md
+          if-no-files-found: ignore
+          retention-days: 14
