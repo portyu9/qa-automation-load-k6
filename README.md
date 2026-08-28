@@ -4,6 +4,15 @@
 [![Extended](https://github.com/portyu9/qa-automation-load-k6/actions/workflows/extended.yml/badge.svg)](https://github.com/portyu9/qa-automation-load-k6/actions/workflows/extended.yml)
 [![Security](https://github.com/portyu9/qa-automation-load-k6/actions/workflows/security.yml/badge.svg)](https://github.com/portyu9/qa-automation-load-k6/actions/workflows/security.yml)
 
+[![k6](https://img.shields.io/badge/k6-2.2.0-7D64FF)](https://k6.io/)
+[![JavaScript](https://img.shields.io/badge/JavaScript-k6%20runtime-F7DF1E)](https://grafana.com/docs/k6/latest/using-k6/javascript-api/)
+[![Bash](https://img.shields.io/badge/Bash-guardrails-4EAA25)](https://www.gnu.org/software/bash/)
+[![Docker](https://img.shields.io/badge/Docker-pinned%20runtime-2496ED)](https://www.docker.com/)
+[![GitHub Actions](https://img.shields.io/badge/GitHub%20Actions-CI-2088FF)](https://github.com/features/actions)
+[![Trivy](https://img.shields.io/badge/Trivy-security%20scan-1904DA)](https://trivy.dev/)
+[![License](https://img.shields.io/badge/License-MIT-2EA44F)](LICENSE)
+[![Security Policy](https://img.shields.io/badge/Security-Policy-6E7781)](.github/SECURITY.md)
+
 A k6 performance quality-engineering framework for smoke, load, stress, and soak analysis with explicit traffic models, centralized threshold policy, business metrics, target guardrails, zero-traffic safety verification, and machine-readable summaries. Ordinary CI executes only guardrail validation and a deliberately low-volume smoke profile. Sustained profiles require explicit operator intent and an exact target-host allowlist match.
 
 > [!CAUTION]
