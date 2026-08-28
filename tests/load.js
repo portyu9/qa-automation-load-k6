@@ -2,6 +2,7 @@ import { sleep } from 'k6';
 import { config, requireLoadAuthorization } from '../lib/config.js';
 import { getJson } from '../lib/client.js';
 import { handleSummary } from '../lib/summary.js';
+import { sloThresholds } from '../lib/thresholds.js';
 
 requireLoadAuthorization('load profile');
 export { handleSummary };
@@ -23,13 +24,10 @@ export const options = {
       tags: { profile: 'load' },
     },
   },
-  thresholds: {
-    checks: ['rate>0.99'],
-    http_req_failed: [`rate<${config.errorRate}`],
-    http_req_duration: [`p(95)<${config.p95Ms}`],
-    dropped_iterations: ['count<1'],
-    business_failures: [`rate<${config.errorRate}`],
-  },
+  thresholds: sloThresholds({
+    errorRate: config.errorRate,
+    p95Ms: config.p95Ms,
+  }),
 };
 
 export default function () {
