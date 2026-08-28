@@ -113,6 +113,32 @@ jobs:
           -w /src
           grafana/k6:2.2.0
           run tests/smoke.js
+      - name: Publish smoke observability summary
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -s reports/summary.json ]]; then
+            requests=$(jq -r '.headline.requests // 0' reports/summary.json)
+            failed_rate=$(jq -r '.headline.failedRate // 0' reports/summary.json)
+            p95=$(jq -r '.headline.p95Ms // 0' reports/summary.json)
+            checks=$(jq -r '.headline.checksRate // 0' reports/summary.json)
+            breaches=$(jq -r '.headline.thresholdBreaches | length' reports/summary.json)
+            {
+              echo '### k6 · smoke'
+              echo
+              echo "- Run ID: \`${K6_RUN_ID}\`"
+              echo "- Job status: \`${{ job.status }}\`"
+              echo "- Requests: \`${requests}\`"
+              echo "- HTTP failure rate: \`${failed_rate}\`"
+              echo "- p95: \`${p95} ms\`"
+              echo "- Check rate: \`${checks}\`"
+              echo "- Threshold breaches: \`${breaches}\`"
+              echo '- Evidence: structured k6 summary JSON + text headline'
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            printf '### k6 · smoke\n\nNo structured summary was produced; inspect the smoke step.\n' >> "$GITHUB_STEP_SUMMARY"
+          fi
       - name: Upload k6 summary
         if: always()
         uses: actions/upload-artifact@v7
