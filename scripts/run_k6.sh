@@ -25,6 +25,11 @@ if [[ "$PROFILE" != "smoke" ]]; then
   fi
 fi
 
+if [[ -z "${K6_BASE_URL:-}" ]]; then
+  echo "Refusing to run $PROFILE without an explicit K6_BASE_URL." >&2
+  exit 5
+fi
+
 if ! command -v k6 >/dev/null 2>&1; then
   echo "k6 is not installed. Install k6 or run the pinned Docker image." >&2
   exit 1
