@@ -14,7 +14,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  K6_BASE_URL: https://jsonplaceholder.typicode.com
+  K6_BASE_URL: http://127.0.0.1:4020
   K6_RUN_ID: gha-${{ github.run_id }}-${{ github.run_attempt }}
 
 jobs:
@@ -25,6 +25,8 @@ jobs:
       - uses: actions/checkout@v7
       - name: Validate shell refusal contract
         run: bash scripts/test_guardrails.sh
+      - name: Validate local fixture syntax
+        run: node --check scripts/local-api.js
       - name: Validate k6 runtime refusal contract without sending traffic
         run: |
           set -euo pipefail
@@ -59,10 +61,10 @@ jobs:
 
           if docker run \
             --rm \
-            -e K6_BASE_URL=https://user:password@jsonplaceholder.typicode.com \
+            -e K6_BASE_URL=http://user:password@127.0.0.1:4020 \
             -e K6_RUN_ID \
             -e K6_ALLOW_LOAD_TEST=true \
-            -e K6_ALLOWED_HOSTS=jsonplaceholder.typicode.com \
+            -e K6_ALLOWED_HOSTS=127.0.0.1 \
             -v "${PWD}:/src" \
             -w /src \
             grafana/k6:2.2.0 \
@@ -73,10 +75,10 @@ jobs:
 
           if docker run \
             --rm \
-            -e K6_BASE_URL='https://jsonplaceholder.typicode.com?token=secret' \
+            -e K6_BASE_URL='http://127.0.0.1:4020?token=secret' \
             -e K6_RUN_ID \
             -e K6_ALLOW_LOAD_TEST=true \
-            -e K6_ALLOWED_HOSTS=jsonplaceholder.typicode.com \
+            -e K6_ALLOWED_HOSTS=127.0.0.1 \
             -v "${PWD}:/src" \
             -w /src \
             grafana/k6:2.2.0 \
@@ -90,7 +92,7 @@ jobs:
             -e K6_BASE_URL \
             -e K6_RUN_ID \
             -e K6_ALLOW_LOAD_TEST=true \
-            -e K6_ALLOWED_HOSTS=jsonplaceholder.typicode.com \
+            -e K6_ALLOWED_HOSTS=127.0.0.1 \
             -v "${PWD}:/src" \
             -w /src \
             grafana/k6:2.2.0 \
@@ -104,15 +106,39 @@ jobs:
       - uses: actions/checkout@v7
       - name: Prepare report directory
         run: mkdir -p reports
-      - name: Run pinned k6 smoke gate
-        run: >-
-          docker run --rm
-          -e K6_BASE_URL
-          -e K6_RUN_ID
-          -v "${PWD}:/src"
-          -w /src
-          grafana/k6:2.2.0
-          run tests/smoke.js
+      - name: Run pinned k6 smoke gate against repository-owned fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/local-api.js > /tmp/k6-local-api.log 2>&1 &
+          api_pid=$!
+          cleanup() {
+            kill "$api_pid" 2>/dev/null || true
+            wait "$api_pid" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          ready=false
+          for _ in {1..40}; do
+            if curl --fail --silent --show-error http://127.0.0.1:4020/health >/dev/null; then
+              ready=true
+              break
+            fi
+            sleep 0.1
+          done
+          if [[ "$ready" != "true" ]]; then
+            cat /tmp/k6-local-api.log >&2
+            exit 1
+          fi
+
+          docker run --rm \
+            --network host \
+            -e K6_BASE_URL \
+            -e K6_RUN_ID \
+            -v "${PWD}:/src" \
+            -w /src \
+            grafana/k6:2.2.0 \
+            run tests/smoke.js
       - name: Publish smoke observability summary
         if: always()
         shell: bash
@@ -128,6 +154,7 @@ jobs:
               echo '### k6 · smoke'
               echo
               echo "- Run ID: \`${K6_RUN_ID}\`"
+              echo '- Target: repository-owned loopback fixture (`127.0.0.1:4020`)'
               echo "- Job status: \`${{ job.status }}\`"
               echo "- Requests: \`${requests}\`"
               echo "- HTTP failure rate: \`${failed_rate}\`"
