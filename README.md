@@ -4,14 +4,13 @@
 [![Extended](https://github.com/portyu9/qa-automation-load-k6/actions/workflows/extended.yml/badge.svg)](https://github.com/portyu9/qa-automation-load-k6/actions/workflows/extended.yml)
 [![Security](https://github.com/portyu9/qa-automation-load-k6/actions/workflows/security.yml/badge.svg)](https://github.com/portyu9/qa-automation-load-k6/actions/workflows/security.yml)
 
-[![k6](https://img.shields.io/badge/k6-2.2.0-7D64FF)](https://k6.io/)
-[![JavaScript](https://img.shields.io/badge/JavaScript-k6%20runtime-F7DF1E)](https://grafana.com/docs/k6/latest/using-k6/javascript-api/)
-[![Bash](https://img.shields.io/badge/Bash-guardrails-4EAA25)](https://www.gnu.org/software/bash/)
-[![Docker](https://img.shields.io/badge/Docker-pinned%20runtime-2496ED)](https://www.docker.com/)
-[![GitHub Actions](https://img.shields.io/badge/GitHub%20Actions-CI-2088FF)](https://github.com/features/actions)
-[![Trivy](https://img.shields.io/badge/Trivy-security%20scan-1904DA)](https://trivy.dev/)
-[![License](https://img.shields.io/badge/License-MIT-2EA44F)](LICENSE)
-[![Security Policy](https://img.shields.io/badge/Security-Policy-6E7781)](.github/SECURITY.md)
+[![k6](https://img.shields.io/badge/k6-performance-7D64FF?logo=k6&logoColor=white)](https://k6.io/)
+[![JavaScript](https://img.shields.io/badge/JavaScript-scripting-F7DF1E?logo=javascript&logoColor=black)](https://grafana.com/docs/k6/latest/using-k6/javascript-api/)
+[![Docker](https://img.shields.io/badge/Docker-runtime-2496ED?logo=docker&logoColor=white)](https://www.docker.com/)
+[![GitHub Actions](https://img.shields.io/badge/GitHub%20Actions-CI-2088FF?logo=githubactions&logoColor=white)](https://github.com/features/actions)
+[![Trivy](https://img.shields.io/badge/Trivy-security-1904DA?logo=trivy&logoColor=white)](https://trivy.dev/)
+[![License](https://img.shields.io/badge/License-MIT-2EA44F?logo=opensourceinitiative&logoColor=white)](LICENSE)
+[![Security Policy](https://img.shields.io/badge/Security-Policy-6E7781?logo=github&logoColor=white)](.github/SECURITY.md)
 
 A k6 performance quality-engineering framework for smoke, load, stress, and soak analysis with explicit traffic models, centralized threshold policy, business metrics, target guardrails, zero-traffic safety verification, and machine-readable summaries. Ordinary CI executes only guardrail validation and a deliberately low-volume smoke profile. Sustained profiles require explicit operator intent and an exact target-host allowlist match.
 
@@ -44,6 +43,18 @@ flowchart TD
     ST --> ZERO
     SO --> ZERO
     OP[Authorized operator] -->|explicit flag + exact host allowlist| RUN[load / stress / soak execution]
+
+    classDef entry fill:#ddf4ff,stroke:#0969da,color:#24292f,stroke-width:1.5px;
+    classDef core fill:#f6f8fa,stroke:#57606a,color:#24292f,stroke-width:1.5px;
+    classDef gate fill:#fbefff,stroke:#8250df,color:#24292f,stroke-width:1.5px;
+    classDef evidence fill:#dafbe1,stroke:#1a7f37,color:#24292f,stroke-width:1.5px;
+    classDef security fill:#ffebe9,stroke:#cf222e,color:#24292f,stroke-width:1.5px;
+    class CHANGE,OP entry;
+    class GUARD core;
+    class SMOKE,EXT,L,ST,SO,RUN gate;
+    class SEC security;
+    class ZERO evidence;
+    linkStyle default stroke:#57606a,stroke-width:1.4px;
 ```
 
 ## Engineering invariants
@@ -75,6 +86,16 @@ flowchart LR
     METRIC --> SUMMARY
     SUMMARY --> JSON[reports/summary.json]
     SUMMARY --> TXT[reports/summary.txt]
+
+    classDef entry fill:#ddf4ff,stroke:#0969da,color:#24292f,stroke-width:1.5px;
+    classDef core fill:#f6f8fa,stroke:#57606a,color:#24292f,stroke-width:1.5px;
+    classDef gate fill:#fbefff,stroke:#8250df,color:#24292f,stroke-width:1.5px;
+    classDef evidence fill:#dafbe1,stroke:#1a7f37,color:#24292f,stroke-width:1.5px;
+    class OP entry;
+    class CFG,PROFILE,CLIENT,SLO,TARGET,METRIC core;
+    class AUTH gate;
+    class SUMMARY,JSON,TXT evidence;
+    linkStyle default stroke:#57606a,stroke-width:1.4px;
 ```
 
 The design separates **target safety**, **demand model**, **request semantics**, **generator capacity**, **service objectives**, and **reporting**. Those concepts should never be collapsed into one pass/fail interpretation.
@@ -360,6 +381,18 @@ flowchart TD
     EXT --> L[load · no traffic]
     EXT --> ST[stress · no traffic]
     EXT --> SO[soak · no traffic]
+
+    classDef entry fill:#ddf4ff,stroke:#0969da,color:#24292f,stroke-width:1.5px;
+    classDef core fill:#f6f8fa,stroke:#57606a,color:#24292f,stroke-width:1.5px;
+    classDef gate fill:#fbefff,stroke:#8250df,color:#24292f,stroke-width:1.5px;
+    classDef evidence fill:#dafbe1,stroke:#1a7f37,color:#24292f,stroke-width:1.5px;
+    classDef security fill:#ffebe9,stroke:#cf222e,color:#24292f,stroke-width:1.5px;
+    class PR,PROFILECHANGE entry;
+    class G,SHELL,INSPECT core;
+    class OK,SMOKE,EXT,L,ST,SO gate;
+    class SEC security;
+    class SUM evidence;
+    linkStyle default stroke:#57606a,stroke-width:1.4px;
 ```
 
 ## Failure triage
