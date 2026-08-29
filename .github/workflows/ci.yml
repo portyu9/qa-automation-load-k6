@@ -125,6 +125,8 @@ jobs:
             -e K6_RUN_ID \
             -e K6_ALLOW_LOAD_TEST=true \
             -e K6_ALLOWED_HOSTS=127.0.0.1 \
+            -e K6_ERROR_RATE=0 \
+            -e K6_THINK_TIME_SECONDS=0 \
             -v "${PWD}:/src" \
             -w /src \
             qa-k6:ci \
@@ -154,6 +156,12 @@ jobs:
 
           ready=false
           for _ in {1..40}; do
+            if ! kill -0 "$api_pid" 2>/dev/null; then
+              echo "repository-owned local API exited before readiness" >&2
+              cat /tmp/k6-local-api.log >&2
+              wait "$api_pid" 2>/dev/null || true
+              exit 1
+            fi
             if curl --fail --silent --show-error http://127.0.0.1:4020/health >/dev/null; then
               ready=true
               break
@@ -161,6 +169,11 @@ jobs:
             sleep 0.1
           done
           if [[ "$ready" != "true" ]]; then
+            cat /tmp/k6-local-api.log >&2
+            exit 1
+          fi
+          if ! kill -0 "$api_pid" 2>/dev/null; then
+            echo "repository-owned local API exited after readiness" >&2
             cat /tmp/k6-local-api.log >&2
             exit 1
           fi
