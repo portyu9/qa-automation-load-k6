@@ -31,8 +31,20 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          expected_ref="$(awk '$1 == "FROM" { print $2; exit }' docker/Dockerfile)"
+          if [[ "$expected_ref" != grafana/k6:* ]]; then
+            echo "docker/Dockerfile must use a tagged grafana/k6 base image" >&2
+            exit 1
+          fi
+          expected_version="${expected_ref#grafana/k6:}"
+          expected_version="${expected_version%%@*}"
+          if [[ -z "$expected_version" ]]; then
+            echo "unable to derive the k6 runtime version from docker/Dockerfile" >&2
+            exit 1
+          fi
+
           docker build -f docker/Dockerfile -t qa-k6:ci .
-          docker run --rm qa-k6:ci | grep -F 'k6 v2.2.0'
+          docker run --rm qa-k6:ci | grep -F "k6 v${expected_version}"
       - name: Validate k6 runtime refusal contract without sending traffic
         run: |
           set -euo pipefail
