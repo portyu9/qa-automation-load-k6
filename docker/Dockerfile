@@ -8,6 +8,6 @@ RUN mkdir -p /src/reports && chown -R 12345:12345 /src
 
 USER 12345
 
-# Smoke is intentionally the default. Load-generating profiles require an
-# explicit K6_ALLOW_LOAD_TEST=true opt-in and an authorized target.
-CMD ["run", "/src/tests/smoke.js"]
+# Image startup is deliberately non-traffic-generating. A caller must select
+# `run` explicitly and provide K6_BASE_URL before any scenario can send traffic.
+CMD ["version"]
