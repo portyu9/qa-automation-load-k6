@@ -27,7 +27,7 @@ jobs:
         run: bash scripts/test_guardrails.sh
       - name: Validate local fixture syntax
         run: node --check scripts/local-api.js
-      - name: Validate packaged image is non-traffic-generating by default
+      - name: Build tracked k6 image and validate non-traffic default
         shell: bash
         run: |
           set -euo pipefail
@@ -42,7 +42,7 @@ jobs:
             -e K6_RUN_ID
             -v "${PWD}:/src"
             -w /src
-            grafana/k6:2.2.0
+            qa-k6:ci
             inspect --include-system-env-vars tests/load.js
           )
 
@@ -59,7 +59,7 @@ jobs:
             -e K6_ALLOWED_HOSTS=example.invalid \
             -v "${PWD}:/src" \
             -w /src \
-            grafana/k6:2.2.0 \
+            qa-k6:ci \
             inspect --include-system-env-vars tests/load.js >/dev/null 2>&1; then
             echo "load profile unexpectedly initialized for a non-allowlisted host" >&2
             exit 1
@@ -73,7 +73,7 @@ jobs:
             -e K6_ALLOWED_HOSTS=127.0.0.1 \
             -v "${PWD}:/src" \
             -w /src \
-            grafana/k6:2.2.0 \
+            qa-k6:ci \
             inspect --include-system-env-vars tests/load.js >/dev/null 2>&1; then
             echo "load profile unexpectedly accepted URL credentials" >&2
             exit 1
@@ -87,7 +87,7 @@ jobs:
             -e K6_ALLOWED_HOSTS=127.0.0.1 \
             -v "${PWD}:/src" \
             -w /src \
-            grafana/k6:2.2.0 \
+            qa-k6:ci \
             inspect --include-system-env-vars tests/load.js >/dev/null 2>&1; then
             echo "load profile unexpectedly accepted a query-bearing base URL" >&2
             exit 1
@@ -101,7 +101,7 @@ jobs:
             -e K6_ALLOWED_HOSTS=127.0.0.1 \
             -v "${PWD}:/src" \
             -w /src \
-            grafana/k6:2.2.0 \
+            qa-k6:ci \
             inspect --include-system-env-vars tests/load.js >/dev/null
 
   smoke:
@@ -112,6 +112,8 @@ jobs:
       - uses: actions/checkout@v7
       - name: Prepare report directory
         run: mkdir -p reports
+      - name: Build tracked k6 image
+        run: docker build -f docker/Dockerfile -t qa-k6:smoke .
       - name: Run pinned k6 smoke gate against repository-owned fixture
         shell: bash
         run: |
@@ -143,7 +145,7 @@ jobs:
             -e K6_RUN_ID \
             -v "${PWD}:/src" \
             -w /src \
-            grafana/k6:2.2.0 \
+            qa-k6:smoke \
             run tests/smoke.js
       - name: Publish smoke observability summary
         if: always()
