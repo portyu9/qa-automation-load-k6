@@ -39,4 +39,16 @@ K6_BASE_URL=https://example.test \
   "$ROOT/scripts/run_k6.sh" load --quiet >/dev/null
 
 grep -Fxq 'run tests/load.js --quiet' "$K6_STUB_OUTPUT"
+
+sensitive_target='https://user:password@example.test/api?access_token=secret'
+wrapper_output=$(K6_BASE_URL="$sensitive_target" "$ROOT/scripts/run_k6.sh" smoke --quiet)
+if grep -Fq "$sensitive_target" <<<"$wrapper_output"; then
+  echo 'unvalidated k6 target leaked to wrapper output' >&2
+  exit 1
+fi
+if grep -Fq 'password' <<<"$wrapper_output" || grep -Fq 'access_token' <<<"$wrapper_output"; then
+  echo 'sensitive k6 target material leaked to wrapper output' >&2
+  exit 1
+fi
+
 echo 'k6 shell guardrail contract: ok'
