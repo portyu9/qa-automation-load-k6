@@ -31,5 +31,5 @@ if ! command -v k6 >/dev/null 2>&1; then
 fi
 
 mkdir -p reports
-echo "profile=$PROFILE target=${K6_BASE_URL:-https://jsonplaceholder.typicode.com} runId=${K6_RUN_ID:-local}"
+echo "profile=$PROFILE runId=${K6_RUN_ID:-local} target=<validated-by-k6>"
 k6 run "tests/${PROFILE}.js" "$@"
