@@ -14,7 +14,7 @@
 [![License](https://img.shields.io/badge/License-MIT-2EA44F?logo=opensourceinitiative&logoColor=white)](LICENSE)
 [![Security Policy](https://img.shields.io/badge/Security-Policy-24292F?logo=github&logoColor=white)](.github/SECURITY.md)
 
-A k6 performance quality-engineering framework for smoke, load, stress, and soak analysis with explicit workload models, centralized threshold policy, business metrics, exact-host target guardrails, zero-traffic safety verification, and machine-readable summaries. Ordinary CI executes only guardrail validation and a deliberately low-volume smoke profile. Sustained profiles require explicit operator intent and an exact target-host allowlist match.
+A k6 performance quality-engineering framework for smoke, load, stress, and soak analysis with explicit workload models, centralized threshold policy, business metrics, exact-host target guardrails, zero-traffic safety verification, and machine-readable summaries. Ordinary CI executes guardrail validation and a deliberately low-volume smoke profile against a repository-owned loopback fixture. Sustained profiles require explicit operator intent and an exact target-host allowlist match.
 
 > [!CAUTION]
 > `load`, `stress`, and `soak` are controlled traffic experiments, not ordinary automated test cases. Authorization, target identity, demand shape, generator capacity, service thresholds, and evidence are separate concerns; no routine CI path is allowed to silently become sustained traffic.
@@ -23,8 +23,8 @@ A k6 performance quality-engineering framework for smoke, load, stress, and soak
 
 | Plane | Question | Traffic behavior | Evidence |
 | --- | --- | --- | --- |
-| Guardrails | Can unsafe/missing sustained-load configuration be rejected? | **Zero traffic** | Shell contract + `k6 inspect` |
-| Smoke | Does the script/target path work and satisfy basic budgets? | Very low volume | `summary.json`, `summary.txt` |
+| Guardrails | Can unsafe/missing target or sustained-load configuration be rejected? | **Zero traffic** | Shell contract + `k6 inspect` |
+| Smoke | Does the script/HTTP path work and satisfy basic budgets? | Very low volume against repository-owned loopback API | `summary.json`, `summary.txt` |
 | Extended profiles | Do `load`/`stress`/`soak` initialize under authorized config? | **Zero traffic — inspect only** | Per-profile inspect artifacts + summary |
 | Sustained load | Does expected demand satisfy service objectives? | Explicit operator execution only | k6 metrics + thresholds |
 | Stress | Where does controlled degradation begin? | Explicit operator execution only | k6 metrics + threshold interpretation |
@@ -36,7 +36,8 @@ A k6 performance quality-engineering framework for smoke, load, stress, and soak
 ```mermaid
 flowchart TD
     CHANGE[Change] --> GUARD[Safety guardrails]
-    GUARD --> SMOKE[Low-volume smoke]
+    GUARD --> FIXTURE[Repository-owned loopback API]
+    FIXTURE --> SMOKE[Low-volume smoke]
     CHANGE --> SEC[Repository security]
     CHANGE --> DOCS[README contract]
     CHANGE --> EXT[Extended profile contracts]
@@ -46,7 +47,7 @@ flowchart TD
     L --> ZERO[No sustained traffic]
     ST --> ZERO
     SO --> ZERO
-    OP[Authorized operator] -->|explicit flag + exact host allowlist| RUN[load / stress / soak execution]
+    OP[Authorized operator] -->|explicit target + flag + exact host allowlist| RUN[load / stress / soak execution]
 
     classDef entry fill:#ddf4ff,stroke:#0969da,color:#24292f,stroke-width:1.5px;
     classDef core fill:#f6f8fa,stroke:#57606a,color:#24292f,stroke-width:1.5px;
@@ -54,7 +55,7 @@ flowchart TD
     classDef evidence fill:#dafbe1,stroke:#1a7f37,color:#24292f,stroke-width:1.5px;
     classDef security fill:#ffebe9,stroke:#cf222e,color:#24292f,stroke-width:1.5px;
     class CHANGE,OP entry;
-    class GUARD core;
+    class GUARD,FIXTURE core;
     class SMOKE,EXT,L,ST,SO,RUN,DOCS gate;
     class SEC security;
     class ZERO evidence;
@@ -65,7 +66,8 @@ flowchart TD
 
 | Concern | Framework contract |
 | --- | --- |
-| Default safety | Automated CI validates guardrails first and runs smoke only. |
+| Default safety | Automated CI validates guardrails first and runs only low-volume smoke traffic against a repository-owned loopback fixture. |
+| Target ownership | `K6_BASE_URL` is always explicit; there is no public-service fallback. |
 | Sustained authorization | `K6_ALLOW_LOAD_TEST=true` **and** exact hostname membership in `K6_ALLOWED_HOSTS`. |
 | Target URL | Absolute HTTP(S), valid hostname/port, no credentials, query, or fragment. |
 | Wrapper privacy | `run_k6.sh` never echoes raw `K6_BASE_URL` before JavaScript/k6 validation; unvalidated credential/query material cannot be copied into routine wrapper output. |
@@ -83,14 +85,15 @@ flowchart TD
 | --- | --- | --- | --- |
 | k6 | VU scheduling, executors, HTTP metrics, checks, thresholds, `inspect`, `handleSummary` | Profile design, shared config/threshold policy, target authorization, business metrics, structured evidence | Native metrics/threshold evaluation and executor behavior remain authoritative |
 | JavaScript k6 runtime | Module initialization, environment access, URL parsing and test logic | Definitive target validation and `requireLoadAuthorization()` so direct `k6 run` cannot bypass guardrails | Validation happens where traffic-capable code actually executes |
-| Bash wrapper | Operator ergonomics, profile dispatch, early shell checks | Fail early on missing sustained opt-in/allowlist, choose profile, invoke k6 | Wrapper is not the security boundary and does not log the unvalidated target |
+| Bash wrapper | Operator ergonomics, profile dispatch, early shell checks | Fail early on missing target and sustained opt-in/allowlist, choose profile, invoke k6 | Wrapper is not the only security boundary and does not log the unvalidated target |
+| Node.js fixture | Repository-owned loopback HTTP behavior for required smoke CI | Deterministic `/health` and `/posts/1` responses with explicit process lifecycle | It proves framework/request behavior, not external environment capacity |
 | `k6 inspect` | Evaluate module/configuration initialization without executing the scenario | Zero-traffic CI proof that sustained profiles initialize only under authorized configuration | Inspect success does not prove performance capacity or target behavior |
 | `shared-iterations` | Finite iteration scheduling | Low-volume smoke only | Smoke is health/correctness evidence, not load capacity |
 | `ramping-arrival-rate` | Open-model requested arrival rate | Load/stress demand profiles with explicit VU bounds | `dropped_iterations` remains a generator/scheduling signal requiring diagnosis |
 | `constant-arrival-rate` | Stable open-model arrival rate | Soak workload shape and duration policy | Soak interpretation requires time-dependent service/resource evidence |
 | Docker | Reproducible k6 runtime/container execution | Pinned k6 image and non-root project image | Container/runtime problems remain infrastructure failures |
 | Trivy | Filesystem vulnerability and supported misconfiguration analysis | HIGH/CRITICAL remediation-oriented repository gate | Configured `vuln,misconfig` scan is not generic credential/secret scanning or remote-target scanning |
-| GitHub Actions | Job scheduling and artifact transport | Guardrail/smoke/extended/security/docs separation | No workflow automatically runs sustained load/stress/soak traffic |
+| GitHub Actions | Job scheduling and artifact transport | Guardrail/local-smoke/extended/security/docs separation | No workflow automatically runs sustained load/stress/soak traffic |
 
 ## Architecture
 
@@ -101,7 +104,7 @@ flowchart LR
     AUTH --> PROFILE[Profile]
     PROFILE --> CLIENT[HTTP client]
     PROFILE --> SLO[Threshold policy]
-    CLIENT --> TARGET[Target]
+    CLIENT --> TARGET[Explicit target]
     CLIENT --> METRIC[HTTP + business metrics]
     SLO --> SUMMARY[handleSummary]
     METRIC --> SUMMARY
@@ -133,6 +136,7 @@ The design separates **target safety**, **demand model**, **request semantics**,
 │   ├── summary.js
 │   └── thresholds.js
 ├── scripts/
+│   ├── local-api.js
 │   ├── run_k6.sh
 │   └── test_guardrails.sh
 ├── tests/
@@ -161,7 +165,7 @@ The design separates **target safety**, **demand model**, **request semantics**,
 
 | Profile | Executor | Performance question | Automatic CI? |
 | --- | --- | --- | --- |
-| `smoke` | `shared-iterations` | Is the execution path healthy at negligible volume? | Yes |
+| `smoke` | `shared-iterations` | Is the execution path healthy at negligible volume? | Yes — local fixture only |
 | `load` | `ramping-arrival-rate` | Can normal operating demand satisfy declared budgets? | **No** |
 | `stress` | `ramping-arrival-rate` | How does behavior degrade beyond the normal envelope? | **No** |
 | `soak` | `constant-arrival-rate` | Does stable demand reveal time-dependent degradation? | **No** |
@@ -170,9 +174,17 @@ Smoke is a correctness/health signal. Load, stress, and soak are controlled expe
 
 ## Quick start
 
-Low-volume smoke with local k6:
+`K6_BASE_URL` is required for every traffic-capable invocation. For a local low-volume smoke run, start the repository-owned fixture in one terminal:
 
 ```bash
+node scripts/local-api.js
+```
+
+Then run k6 in another terminal:
+
+```bash
+K6_BASE_URL=http://127.0.0.1:4020 \
+K6_RUN_ID=local-smoke \
 bash scripts/run_k6.sh smoke
 ```
 
@@ -183,14 +195,19 @@ bash scripts/test_guardrails.sh
 python .github/scripts/validate_readme.py
 ```
 
-Pinned container smoke execution:
+CI reproduces smoke with the pinned container on Linux host networking so the container reaches the repository-owned loopback fixture:
 
 ```bash
 mkdir -p reports
+node scripts/local-api.js &
+api_pid=$!
+trap 'kill "$api_pid" 2>/dev/null || true' EXIT
 
-docker run --rm \
-  -e K6_BASE_URL=https://jsonplaceholder.typicode.com \
-  -e K6_RUN_ID=local-smoke \
+K6_BASE_URL=http://127.0.0.1:4020 \
+K6_RUN_ID=local-smoke \
+docker run --rm --network host \
+  -e K6_BASE_URL \
+  -e K6_RUN_ID \
   -v "$PWD:/src" \
   -w /src \
   grafana/k6:2.2.0 \
@@ -213,7 +230,7 @@ k6 inspect --include-system-env-vars tests/load.js
 
 | Variable | Purpose | Default |
 | --- | --- | --- |
-| `K6_BASE_URL` | Target base URL | `https://jsonplaceholder.typicode.com` |
+| `K6_BASE_URL` | Explicit target base URL | required |
 | `K6_RUN_ID` | Cross-system run correlation | generated ID |
 | `K6_P95_MS` | Default p95 budget | `500` |
 | `K6_ERROR_RATE` | Maximum normal error/business-failure rate | `0.01` |
@@ -223,13 +240,15 @@ k6 inspect --include-system-env-vars tests/load.js
 | `K6_SOAK_DURATION` | Soak duration | `10m` |
 | `K6_SOAK_RATE` | Soak arrival rate | `5` |
 
-`K6_BASE_URL` must be an absolute HTTP(S) URL. Optional path prefixes are allowed. URL credentials, query strings, fragments, invalid hostnames, nonnumeric ports, and ports outside `1..65535` are rejected.
+`K6_BASE_URL` must be explicitly supplied and must be an absolute HTTP(S) URL. Optional path prefixes are allowed. URL credentials, query strings, fragments, invalid hostnames, nonnumeric ports, and ports outside `1..65535` are rejected. The shell wrapper also refuses an unset target before invoking k6, while `lib/config.js` independently enforces the same fail-closed ownership for direct k6 execution.
 
 ## Sustained-profile authorization boundary
 
-A single boolean opt-in is insufficient because it can be inherited accidentally from a shell or copied CI environment. The framework requires both:
+A single boolean opt-in is insufficient because it can be inherited accidentally from a shell or copied CI environment. The framework requires all of the following:
 
 ```text
+K6_BASE_URL=<explicit target>
+AND
 K6_ALLOW_LOAD_TEST=true
 AND
 target hostname ∈ K6_ALLOWED_HOSTS
@@ -246,7 +265,7 @@ bash scripts/run_k6.sh load
 
 Matching is exact. `example.internal` does not authorize `perf-api.example.internal`.
 
-The shell wrapper performs early human-readable checks, while JavaScript `requireLoadAuthorization()` is the definitive enforcement boundary. Directly invoking `k6 run tests/load.js` therefore does not bypass authorization.
+The shell wrapper performs early human-readable checks, while JavaScript `requireLoadAuthorization()` is the definitive enforcement boundary. Directly invoking `k6 run tests/load.js` therefore does not bypass authorization or target validation.
 
 > [!WARNING]
 > These controls prove framework intent and exact target identity, not legal or organizational authorization. Sustained execution still requires target ownership, an approved test window, change control, capacity planning, and operational coordination.
@@ -255,19 +274,27 @@ The shell wrapper performs early human-readable checks, while JavaScript `requir
 
 `scripts/run_k6.sh` intentionally reports profile/run identity but prints `target=<validated-by-k6>` rather than interpolating the raw `K6_BASE_URL`. This matters because the shell executes **before** `lib/config.js` can reject URL credentials, query strings, or fragments.
 
-`scripts/test_guardrails.sh` contains a regression using a credential/query-bearing synthetic target and asserts that neither the raw URL nor sensitive markers such as `password` or `access_token` appear in wrapper output. The JavaScript layer remains responsible for rejecting the target itself.
+`scripts/test_guardrails.sh` contains regressions proving missing targets are refused and using a credential/query-bearing synthetic target to assert that neither the raw URL nor sensitive markers such as `password` or `access_token` appear in wrapper output. The JavaScript layer remains responsible for independently rejecting the target itself.
 
 ## Zero-traffic safety validation
 
-Primary CI validates sustained-load safety before smoke.
+Primary CI validates target and sustained-load safety before smoke.
 
 ### Shell contract
 
-`scripts/test_guardrails.sh` replaces the `k6` executable with a stub and proves missing sustained-load opt-in is refused, missing allowlist is refused, a valid flag/allowlist combination reaches the expected command, and unvalidated target material is not printed. No target is contacted.
+`scripts/test_guardrails.sh` replaces the `k6` executable with a stub and proves missing sustained-load opt-in is refused, missing allowlist is refused, missing `K6_BASE_URL` is refused, a valid flag/allowlist/target combination reaches the expected command, and unvalidated target material is not printed. No target is contacted.
 
 ### Native k6 initialization contract
 
-The pinned k6 image runs `inspect --include-system-env-vars` against the load profile to prove rejection of missing opt-in, host allowlist mismatch, URL credentials, and query-bearing target URLs. It also proves successful initialization for an exact allowlisted target—still without running the load scenario.
+The pinned k6 image runs `inspect --include-system-env-vars` against the load profile to prove rejection of missing opt-in, host allowlist mismatch, URL credentials, and query-bearing target URLs. It also proves successful initialization for an exact allowlisted loopback target—still without running the load scenario.
+
+## Deterministic smoke boundary
+
+Required smoke CI starts `scripts/local-api.js` on `127.0.0.1:4020`, waits for `/health` with a bounded readiness loop, and then runs the pinned k6 container against `/posts/1`. The local API is owned and terminated by the same CI step. Docker uses Linux host networking only for this loopback connection.
+
+This retains real HTTP serialization, k6 checks, timings, thresholds, request correlation, and summary generation while removing DNS, TLS, third-party data drift, rate limits, and public-service availability from required framework validation.
+
+The fixture is intentionally small. It proves the k6 framework path, not the capacity or behavior of an external environment.
 
 ## Extended sustained-profile validation
 
@@ -374,7 +401,8 @@ flowchart TD
     PR[Push / PR] --> G[Guardrails]
     G --> SHELL[Stubbed shell contract]
     G --> INSPECT[Native k6 inspect contract]
-    INSPECT --> SMOKE[Low-volume smoke only]
+    INSPECT --> FIXTURE[Loopback API fixture]
+    FIXTURE --> SMOKE[Low-volume smoke only]
     PR --> SEC[Trivy security]
     PR --> DOCS[README contract]
     CHANGE[Performance/framework change] --> EXT[Extended inspect matrix]
@@ -392,7 +420,7 @@ flowchart TD
     classDef evidence fill:#dafbe1,stroke:#1a7f37,color:#24292f,stroke-width:1.5px;
     classDef security fill:#ffebe9,stroke:#cf222e,color:#24292f,stroke-width:1.5px;
     class PR,CHANGE entry;
-    class G,SHELL core;
+    class G,SHELL,FIXTURE core;
     class INSPECT,SMOKE,EXT,L,ST,SO,DOCS gate;
     class SEC security;
     class EV,ZERO evidence;
@@ -403,11 +431,13 @@ flowchart TD
 
 | Signal | First interpretation | Correct first move |
 | --- | --- | --- |
+| Missing `K6_BASE_URL` | Target ownership/configuration | Supply an approved explicit target; do not restore an implicit public default |
 | Shell guardrail refusal | Operator/config authorization | Correct opt-in/allowlist; do not bypass wrapper checks |
 | URL validation refusal | Target configuration | Remove unsafe URL components / correct hostname/port |
 | Credential/query leak regression | Wrapper privacy boundary | Keep raw target out of pre-validation output |
 | `k6 inspect` failure | Module/config/profile initialization | Fix configuration/script without running sustained traffic |
-| Smoke HTTP/check failure | Basic target/request semantics | Inspect smoke summary and target health |
+| Smoke fixture/readiness failure | Repository-owned CI dependency | Inspect local API lifecycle before interpreting k6 metrics |
+| Smoke HTTP/check failure | Basic request/framework semantics | Inspect smoke summary and local fixture contract |
 | Threshold breach | Service objective / experiment result | Diagnose metric and workload before changing threshold |
 | Dropped iterations | Generator/scheduling capacity | Compare target latency, VU demand and generator resources |
 | Extended matrix failure | Sustained-profile configuration | Fix profile init; extended does not prove target performance |
@@ -416,21 +446,25 @@ flowchart TD
 
 ## Extension rules
 
-1. validate any new target/environment input before traffic;
-2. keep definitive sustained authorization inside JavaScript/k6 code, not only the shell wrapper;
-3. never print an unvalidated raw target before URL safety checks;
-4. choose executor semantics based on the performance question, not habit;
-5. keep business correctness separate from transport success;
-6. interpret dropped iterations as a generator/scheduling signal requiring context;
-7. centralize shared threshold policy and make profile deviations explicit;
-8. preserve smoke as the only automatic traffic-bearing CI profile;
-9. keep extended sustained validation inspect-only;
-10. keep structured evidence native to k6 metrics/thresholds;
-11. keep Docker/runtime behavior reproducible and non-root where practical;
-12. update README contracts whenever profile, guardrail, workflow, or evidence behavior changes.
+1. require an explicit target for every traffic-capable invocation;
+2. keep required smoke CI on repository-owned deterministic infrastructure;
+3. validate any new target/environment input before traffic;
+4. keep definitive sustained authorization inside JavaScript/k6 code, not only the shell wrapper;
+5. never print an unvalidated raw target before URL safety checks;
+6. choose executor semantics based on the performance question, not habit;
+7. keep business correctness separate from transport success;
+8. interpret dropped iterations as a generator/scheduling signal requiring context;
+9. centralize shared threshold policy and make profile deviations explicit;
+10. preserve smoke as the only automatic traffic-bearing CI profile;
+11. keep extended sustained validation inspect-only;
+12. keep structured evidence native to k6 metrics/thresholds;
+13. keep Docker/runtime behavior reproducible and non-root where practical;
+14. update README contracts whenever profile, guardrail, workflow, or evidence behavior changes.
 
 ## Explicit anti-patterns
 
+- implicit or public demonstration-service defaults for `K6_BASE_URL`;
+- public-network smoke traffic in required framework CI;
 - automatic `k6 run` of load/stress/soak on routine CI events;
 - wildcard/suffix host authorization where exact identity is required;
 - one boolean opt-in as the only sustained-load control;
