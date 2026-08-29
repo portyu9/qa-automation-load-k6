@@ -27,6 +27,12 @@ jobs:
         run: bash scripts/test_guardrails.sh
       - name: Validate local fixture syntax
         run: node --check scripts/local-api.js
+      - name: Validate packaged image is non-traffic-generating by default
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build -f docker/Dockerfile -t qa-k6:ci .
+          docker run --rm qa-k6:ci | grep -F 'k6 v2.2.0'
       - name: Validate k6 runtime refusal contract without sending traffic
         run: |
           set -euo pipefail
