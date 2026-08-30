@@ -197,6 +197,18 @@ jobs:
             -w /src \
             qa-k6:smoke \
             run tests/smoke.js
+      - name: Verify machine summary remains allowlisted
+        shell: bash
+        run: |
+          set -euo pipefail
+          jq -e '
+            .schemaVersion == 1 and
+            (.run | type == "object") and
+            (.headline | type == "object") and
+            (has("metrics") | not) and
+            (has("rootGroup") | not) and
+            (has("state") | not)
+          ' reports/summary.json >/dev/null
       - name: Publish smoke observability summary
         if: always()
         shell: bash
@@ -219,7 +231,7 @@ jobs:
               echo "- p95: \`${p95} ms\`"
               echo "- Check rate: \`${checks}\`"
               echo "- Threshold breaches: \`${breaches}\`"
-              echo '- Evidence: structured k6 summary JSON + text headline'
+              echo '- Evidence: allowlisted k6 summary JSON + text headline'
             } >> "$GITHUB_STEP_SUMMARY"
           else
             printf '### k6 · smoke\n\nNo structured summary was produced; inspect the smoke step.\n' >> "$GITHUB_STEP_SUMMARY"
