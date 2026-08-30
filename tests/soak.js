@@ -7,15 +7,13 @@ import { sloThresholds } from '../lib/thresholds.js';
 requireLoadAuthorization('soak profile');
 export { handleSummary };
 
-const duration = __ENV.K6_SOAK_DURATION || '10m';
-
 export const options = {
   scenarios: {
     soak: {
       executor: 'constant-arrival-rate',
-      rate: Number(__ENV.K6_SOAK_RATE || 5),
+      rate: config.soakRate,
       timeUnit: '1s',
-      duration,
+      duration: config.soakDuration,
       preAllocatedVUs: 10,
       maxVUs: 50,
       gracefulStop: '30s',
