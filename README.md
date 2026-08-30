@@ -116,12 +116,14 @@ That classification is written to run evidence so local framework smoke cannot b
 
 ```text
 .
-├── docker/Dockerfile
-├── lib/{client.js,config.js,metrics.js,summary.js,thresholds.js}
-├── scripts/{local-api.js,run_k6.sh,test_guardrails.sh}
-├── tests/{smoke.js,load.js,stress.js,soak.js}
-├── docs/{ARCHITECTURE.md,TEST_STRATEGY.md}
-└── .github/workflows/{ci,docs,extended,security}.yml
+├── .github/
+│   ├── scripts/
+│   └── workflows/
+├── docker/
+├── docs/
+├── lib/
+├── scripts/
+└── tests/
 ```
 
 ## Quick start
@@ -177,7 +179,6 @@ k6 inspect --include-system-env-vars tests/load.js
 | `K6_ALLOWED_HOSTS` | Exact authorized hostnames | unset |
 | `K6_SOAK_DURATION` | Soak duration | `10m` |
 | `K6_SOAK_RATE` | Soak arrival rate | `5` |
-
 </details>
 
 ## Deterministic smoke boundary
