@@ -179,6 +179,7 @@ k6 inspect --include-system-env-vars tests/load.js
 | `K6_ALLOWED_HOSTS` | Exact authorized hostnames | unset |
 | `K6_SOAK_DURATION` | Soak duration | `10m` |
 | `K6_SOAK_RATE` | Soak arrival rate | `5` |
+
 </details>
 
 ## Deterministic smoke boundary
