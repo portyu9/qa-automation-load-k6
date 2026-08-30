@@ -132,6 +132,17 @@ jobs:
             qa-k6:ci \
             inspect --include-system-env-vars tests/load.js >/dev/null
 
+          docker run \
+            --rm \
+            -e K6_BASE_URL='http://[2001:db8::192.0.2.1]:4020' \
+            -e K6_RUN_ID \
+            -e K6_ALLOW_LOAD_TEST=true \
+            -e K6_ALLOWED_HOSTS='2001:db8::192.0.2.1' \
+            -v "${PWD}:/src" \
+            -w /src \
+            qa-k6:ci \
+            inspect --include-system-env-vars tests/load.js >/dev/null
+
   smoke:
     needs: guardrails
     runs-on: ubuntu-latest
