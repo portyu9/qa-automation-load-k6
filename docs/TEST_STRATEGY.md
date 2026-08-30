@@ -30,7 +30,7 @@ The target validator rejects:
 - URL credentials;
 - query-bearing URLs;
 - fragment-bearing URLs;
-- invalid hostnames;
+- invalid DNS-like hostnames or malformed bracketed IPv6 hosts;
 - nonnumeric ports;
 - ports outside `1..65535`.
 
@@ -56,7 +56,9 @@ The image default command is deliberately non-traffic-generating: starting the i
 
 ## Deterministic smoke strategy
 
-Required smoke CI starts `scripts/local-api.js`, waits for `/health` using a bounded readiness poll, builds the tracked project image, and executes that image against `http://127.0.0.1:4020` using Linux host networking.
+Required smoke CI starts `scripts/local-api.js`, verifies the spawned fixture process is still alive while polling `/health` with a bounded deadline, builds the tracked project image, and executes that image against `http://127.0.0.1:4020` using Linux host networking.
+
+The process-liveness check matters because a successful `/health` response alone is not proof that the child process started by the job owns the listener; an unrelated process already bound to the same port must never satisfy readiness accidentally.
 
 The fixture is deliberately small and synthetic. It exists to prove the framework path, not external-provider compatibility or capacity. The smoke profile verifies:
 
@@ -81,7 +83,7 @@ The shell self-test replaces `k6` with a stub. It proves refusal and command-rou
 
 Native k6 safety checks use the project-built image with `k6 inspect --include-system-env-vars`. `inspect` initializes imported modules and scenario options but does not execute the configured workload. This proves the JavaScript safety boundary itself is active even when the shell wrapper is bypassed.
 
-The guardrail lane rejects missing sustained opt-in, exact-host mismatch, unsafe target URLs, and invalid `K6_RUN_ID` values. A matching allowlisted target with a safe run ID must initialize successfully.
+The guardrail lane rejects missing sustained opt-in, exact-host mismatch, unsafe target URLs, and invalid `K6_RUN_ID` values. A matching allowlisted target with a safe run ID must initialize successfully. It also proves valid boundary values initialize correctly: `K6_ERROR_RATE=0` represents a zero-error budget and `K6_THINK_TIME_SECONDS=0` represents no artificial pacing delay.
 
 Extended CI applies the same inspect-only pattern to `load`, `stress`, and `soak`. The synthetic `example.invalid` target is present solely to exercise explicit target parsing and exact-host authorization during initialization; no traffic is sent to it.
 
@@ -132,6 +134,14 @@ Custom metrics do not replace native HTTP metrics. They provide a business-level
 
 Thresholds are automated pass/fail contracts, not descriptive dashboards. `lib/thresholds.js` centralizes common expressions so profile policy cannot drift accidentally.
 
+Rate boundaries are inclusive by policy:
+
+- a declared success/check floor is expressed as `rate>=floor`;
+- a declared HTTP/business failure budget is expressed as `rate<=budget`;
+- a zero error budget is valid and means exactly that no failed-rate allowance is granted.
+
+This avoids the off-by-boundary behavior of strict `>`/`<` comparisons where a result exactly equal to the declared policy would fail despite meeting the stated contract.
+
 At minimum interpret:
 
 - `checks` rate;
@@ -151,7 +161,7 @@ Triage order:
 1. was an explicit target supplied and accepted?;
 2. is the run ID valid and safe for headers/evidence?;
 3. for sustained profiles, did opt-in and exact-host authorization succeed?;
-4. for CI smoke, did the repository-owned fixture become healthy?;
+4. for CI smoke, is the repository-owned child process alive and did its fixture become healthy?;
 5. did the scenario achieve the intended request schedule?;
 6. were iterations dropped due to generator capacity?;
 7. did transport/check/business signals fail?;
@@ -170,7 +180,7 @@ Do not interpret one p95 number without workload context.
 | Shell guardrail regression | Operator-safety wrapper defect |
 | Project-image startup/version mismatch | Runtime packaging/dependency ownership defect |
 | `k6 inspect` regression | Runtime/module safety-policy defect |
-| Local fixture startup/readiness | CI smoke infrastructure defect |
+| Local fixture process/readiness mismatch | CI smoke ownership/infrastructure defect |
 | Smoke HTTP/check/business failure | Client/request/fixture contract defect |
 | Metric endpoint relabeling | Framework metric-tag ownership defect |
 | Summary artifact missing | Evidence/lifecycle defect |
@@ -203,13 +213,15 @@ A k6 framework change is ready when:
 - missing target ownership is rejected before traffic;
 - unsafe run-correlation values are rejected before traffic;
 - zero-traffic shell and k6 runtime guardrail checks pass;
+- valid zero error-budget/no-think-time boundary values initialize successfully;
 - unsafe targets/configuration are rejected before execution;
 - the tracked Dockerfile builds and its default startup generates no traffic;
-- the low-volume smoke gate passes against the repository-owned fixture using the project-built image;
+- the low-volume smoke gate proves ownership of the spawned loopback fixture and passes using the project-built image;
 - no required CI path depends on a public or deployed service;
 - endpoint tags remain authoritative and bounded;
 - business and native metrics remain separately interpretable;
 - summary artifacts identify run/target class and threshold breaches;
+- threshold comparisons match the declared inclusive policy boundaries;
 - threshold policy changes are explicit and reviewed separately from workload shape;
 - no sustained profile is added to ordinary CI against an uncontrolled target;
 - extended load/stress/soak validation remains inspect-only;
