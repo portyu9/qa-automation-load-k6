@@ -150,7 +150,13 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Prepare report directory
-        run: mkdir -p reports
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          : > reports/summary.txt
+          : > reports/summary.json
+          chmod a+rw reports/summary.txt reports/summary.json
       - name: Build tracked k6 image
         run: docker build -f docker/Dockerfile -t qa-k6:smoke .
       - name: Run pinned k6 smoke gate against repository-owned fixture
