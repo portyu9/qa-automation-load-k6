@@ -40,6 +40,35 @@ jobs:
         run: mkdir -p reports
       - name: Build tracked k6 image
         run: docker build -f docker/Dockerfile -t qa-k6:extended .
+      - name: Reject invalid soak configuration without traffic
+        if: matrix.profile == 'soak'
+        shell: bash
+        run: |
+          set -euo pipefail
+          common=(
+            --rm
+            -e K6_BASE_URL
+            -e K6_RUN_ID
+            -e K6_ALLOW_LOAD_TEST
+            -e K6_ALLOWED_HOSTS
+            -v "${PWD}:/src"
+            -w /src
+            qa-k6:extended
+            inspect --include-system-env-vars tests/soak.js
+          )
+
+          if docker run -e K6_SOAK_RATE=0 "${common[@]}" >/dev/null 2>&1; then
+            echo "soak profile unexpectedly accepted a non-positive arrival rate" >&2
+            exit 1
+          fi
+          if docker run -e K6_SOAK_DURATION=forever "${common[@]}" >/dev/null 2>&1; then
+            echo "soak profile unexpectedly accepted an invalid duration" >&2
+            exit 1
+          fi
+          docker run \
+            -e K6_SOAK_RATE=7 \
+            -e K6_SOAK_DURATION=1h30m \
+            "${common[@]}" >/dev/null
       - name: Inspect ${{ matrix.profile }} profile without executing traffic
         run: >-
           docker run --rm
