@@ -21,7 +21,14 @@ jobs:
         run: |
           set -euo pipefail
           python - <<'PY'
+          import re
           from pathlib import Path
+
+          def replace_once(text, pattern, replacement, label):
+              updated, count = re.subn(pattern, replacement, text, count=1, flags=re.S)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected one replacement, got {count}')
+              return updated
 
           readme = Path('README.md')
           text = readme.read_text()
@@ -33,24 +40,24 @@ jobs:
               '| Runtime source | `docker/Dockerfile` pins the k6 runtime; CI/extended build that file rather than duplicating image tags in workflow shell. |',
               '| Runtime source | `docker/Dockerfile` owns the upstream release marker, exact source version/commit, patched Go builder, and final runtime image; CI/extended build that file rather than duplicating runtime versions in workflow shell. |'
           )
-          old = '''`docker/Dockerfile` is the single tracked source for the pinned k6 runtime used by CI and extended profile contracts. The workflows build that Dockerfile instead of independently hard-coding `grafana/k6:<version>` in shell commands.
-
-That matters for two reasons:
-
-1. **Dependency ownership** — Dependabot's Docker ecosystem can propose runtime updates at the file that actually controls CI execution.
-2. **Safety ownership** — the image's default command is `k6 version`, so starting it cannot silently run smoke/load/stress/soak. Traffic requires an explicit `run ...` command plus `K6_BASE_URL`; sustained traffic still requires the separate authorization contract.
-
-CI builds the image and verifies its startup/runtime contract before using it for smoke. Extended jobs build the same image and use `inspect` only. A Dockerfile change therefore exercises both packaged-runtime safety and profile initialization.'''
-          new = '''`docker/Dockerfile` is the single tracked runtime/provenance source used by CI and extended profile contracts. It retains a digest-pinned official `grafana/k6:<version>` stage as the upstream release marker that Docker Dependabot can observe, but the executing `/usr/bin/k6` is rebuilt from the exact `K6_VERSION` tag and `K6_COMMIT` with a digest-pinned patched Go builder. The source checkout fails unless the fetched release tag resolves to the committed revision.
-
-The final Alpine stage is separately digest-pinned, updated during the build, and scanned as the actual produced image. This separation exists because the current official k6 2.2.0 image was compiled with a Go toolchain that had fixed HIGH vulnerabilities; merely upgrading its Alpine packages would not remediate vulnerabilities compiled into the k6 binary.
-
-Dependency automation is therefore a **release signal, not an automatic runtime switch**. CI derives the expected k6 version from the official release-marker `FROM` line and compares it with the rebuilt binary. If Dependabot changes the marker without the reviewed `K6_VERSION`/`K6_COMMIT` source pins being synchronized, the packaged-runtime gate fails. A runtime update must review the upstream release, synchronize source provenance, and pass guardrails, smoke, extended initialization, CodeQL, repository Trivy, and built-image Trivy.
-
-The image's default command remains `k6 version`, so starting it cannot silently run smoke/load/stress/soak. Traffic requires an explicit `run ...` command plus `K6_BASE_URL`; sustained traffic still requires the separate authorization contract. CI verifies startup/runtime identity before smoke, while extended jobs build the same image and use `inspect` only.'''
-          if old not in text:
-              raise SystemExit('README packaged-runtime block not found')
-          text = text.replace(old, new)
+          readme_runtime = (
+              '`docker/Dockerfile` is the single tracked runtime/provenance source used by CI and extended profile contracts. '
+              'It retains a digest-pinned official `grafana/k6:<version>` stage as the upstream release marker that Docker Dependabot can observe, but the executing `/usr/bin/k6` is rebuilt from the exact `K6_VERSION` tag and `K6_COMMIT` with a digest-pinned patched Go builder. '
+              'The source checkout fails unless the fetched release tag resolves to the committed revision.\n\n'
+              'The final Alpine stage is separately digest-pinned, updated during the build, and scanned as the actual produced image. '
+              'This separation exists because the current official k6 2.2.0 image was compiled with a Go toolchain that had fixed HIGH vulnerabilities; merely upgrading its Alpine packages would not remediate vulnerabilities compiled into the k6 binary.\n\n'
+              'Dependency automation is therefore a **release signal, not an automatic runtime switch**. CI derives the expected k6 version from the official release-marker `FROM` line and compares it with the rebuilt binary. '
+              'If Dependabot changes the marker without the reviewed `K6_VERSION`/`K6_COMMIT` source pins being synchronized, the packaged-runtime gate fails. '
+              'A runtime update must review the upstream release, synchronize source provenance, and pass guardrails, smoke, extended initialization, CodeQL, repository Trivy, and built-image Trivy.\n\n'
+              "The image's default command remains `k6 version`, so starting it cannot silently run smoke/load/stress/soak. Traffic requires an explicit `run ...` command plus `K6_BASE_URL`; sustained traffic still requires the separate authorization contract. "
+              'CI verifies startup/runtime identity before smoke, while extended jobs build the same image and use `inspect` only.'
+          )
+          text = replace_once(
+              text,
+              r'`docker/Dockerfile` is the single tracked source for the pinned k6 runtime used by CI and extended profile contracts\..*?A Dockerfile change therefore exercises both packaged-runtime safety and profile initialization\.',
+              readme_runtime,
+              'README packaged runtime'
+          )
           text = text.replace(
               '- the Dockerfile is the actual k6 runtime source consumed by CI/extended, avoiding version drift between manifest and workflow shell;',
               '- Docker updates surface the upstream release marker; runtime PRs must also synchronize the exact source version/commit, and CI rejects marker/binary version drift;'
@@ -63,23 +70,23 @@ The image's default command remains `k6 version`, so starting it cannot silently
 
           architecture = Path('docs/ARCHITECTURE.md')
           text = architecture.read_text()
-          old = '''`docker/Dockerfile` is the single repository-owned source for the k6 runtime image/version used by CI. Dependabot's Docker ecosystem tracks that file.
-
-CI builds the Dockerfile and derives the expected version from its `FROM grafana/k6:<tag>` reference rather than duplicating the tag in shell commands. This prevents a correct Dependabot image update from failing because a separate workflow literal was not updated.
-
-The image is non-root and its default command is `k6 version`. Starting the image without explicit `run ...` arguments therefore generates **zero traffic**. Traffic requires an explicit command plus validated target configuration.
-
-Extended `inspect` and primary smoke gates use the same tracked image, so the dependency source, safety checks, and executing runtime cannot drift independently.'''
-          new = '''`docker/Dockerfile` is the single repository-owned runtime/provenance source used by CI. Its digest-pinned official `grafana/k6:<version>` stage is an upstream release marker for Docker Dependabot; the executing binary is rebuilt from the exact `K6_VERSION` tag and `K6_COMMIT` with a digest-pinned patched Go toolchain. The build verifies that the fetched tag resolves to the committed source revision before compiling.
-
-CI derives the expected runtime version from the official release-marker `FROM` reference and compares it with the rebuilt image's `k6 version`. A Dependabot marker update therefore fails closed until the reviewed source version/commit are synchronized. The final Alpine runtime is separately pinned, updated during image construction, and scanned after build so OS fixes and vulnerabilities compiled into the Go binary are treated as distinct concerns.
-
-The custom rebuild is deliberate: the official k6 2.2.0 image was built with a Go version that had fixed HIGH vulnerabilities, which an Alpine-only package upgrade could not remove. The produced image remains non-root and its default command is `k6 version`, so starting it without explicit `run ...` arguments generates **zero traffic**.
-
-Extended `inspect` and primary smoke gates use the same tracked image. Guardrails, runtime-version verification, built-image Trivy, and exact source-revision verification make provenance drift a failing condition rather than a documentation convention.'''
-          if old not in text:
-              raise SystemExit('architecture packaged-runtime block not found')
-          text = text.replace(old, new)
+          architecture_runtime = (
+              '`docker/Dockerfile` is the single repository-owned runtime/provenance source used by CI. '
+              'Its digest-pinned official `grafana/k6:<version>` stage is an upstream release marker for Docker Dependabot; the executing binary is rebuilt from the exact `K6_VERSION` tag and `K6_COMMIT` with a digest-pinned patched Go toolchain. '
+              'The build verifies that the fetched tag resolves to the committed source revision before compiling.\n\n'
+              "CI derives the expected runtime version from the official release-marker `FROM` reference and compares it with the rebuilt image's `k6 version`. "
+              'A Dependabot marker update therefore fails closed until the reviewed source version/commit are synchronized. '
+              'The final Alpine runtime is separately pinned, updated during image construction, and scanned after build so OS fixes and vulnerabilities compiled into the Go binary are treated as distinct concerns.\n\n'
+              'The custom rebuild is deliberate: the official k6 2.2.0 image was built with a Go version that had fixed HIGH vulnerabilities, which an Alpine-only package upgrade could not remove. '
+              'The produced image remains non-root and its default command is `k6 version`, so starting it without explicit `run ...` arguments generates **zero traffic**.\n\n'
+              'Extended `inspect` and primary smoke gates use the same tracked image. Guardrails, runtime-version verification, built-image Trivy, and exact source-revision verification make provenance drift a failing condition rather than a documentation convention.'
+          )
+          text = replace_once(
+              text,
+              r'`docker/Dockerfile` is the single repository-owned source for the k6 runtime image/version used by CI\..*?Extended `inspect` and primary smoke gates use the same tracked image, so the dependency source, safety checks, and executing runtime cannot drift independently\.',
+              architecture_runtime,
+              'architecture packaged runtime'
+          )
           text = text.replace('- `business_failures` (`Counter`);', '- `business_failures` (`Rate`);')
           text = text.replace('- raw metric summaries;', '- allowlisted headline HTTP/check/business metric values;')
           text = text.replace(
@@ -90,19 +97,23 @@ Extended `inspect` and primary smoke gates use the same tracked image. Guardrail
 
           strategy = Path('docs/TEST_STRATEGY.md')
           text = strategy.read_text()
-          old = '''`docker/Dockerfile` is the single tracked source for the k6 runtime image used by CI and extended profile contracts. Workflows build that Dockerfile instead of independently hard-coding a second `grafana/k6:<version>` reference in shell commands.
-
-This gives dependency automation one authoritative runtime source and prevents workflow/runtime drift. CI derives the expected runtime version from the Dockerfile and verifies the built image reports that version.
-
-The image default command is deliberately non-traffic-generating: starting the image without an explicit scenario command runs `k6 version`. Traffic therefore requires an explicit `run ...` command plus a valid `K6_BASE_URL`; sustained traffic still requires the additional opt-in and exact-host allowlist.'''
-          new = '''`docker/Dockerfile` is the single tracked runtime/provenance source used by CI and extended profile contracts. A digest-pinned official k6 stage is retained as the Docker-Dependabot release marker, while the executing binary is rebuilt from the exact release tag and committed upstream revision with a digest-pinned patched Go toolchain. The build fails if the fetched tag does not resolve to that revision.
-
-CI derives the expected version from the release-marker `FROM` reference and verifies that the rebuilt image reports the same version. This makes a Dependabot marker update a review signal: it cannot become a green runtime update until the source version/commit are intentionally synchronized. Built-image Trivy then evaluates the produced runtime, covering both final OS packages and vulnerabilities compiled into the Go binary.
-
-The source rebuild is intentional for k6 2.2.0 because its official image was compiled with a Go toolchain containing fixed HIGH vulnerabilities; updating only Alpine packages would leave those findings in the binary. The project image remains non-root and deliberately non-traffic-generating by default: starting it without an explicit scenario command runs `k6 version`. Traffic therefore requires an explicit `run ...` command plus a valid `K6_BASE_URL`; sustained traffic still requires the additional opt-in and exact-host allowlist.'''
-          if old not in text:
-              raise SystemExit('strategy packaged-runtime block not found')
-          text = text.replace(old, new)
+          strategy_runtime = (
+              '`docker/Dockerfile` is the single tracked runtime/provenance source used by CI and extended profile contracts. '
+              'A digest-pinned official k6 stage is retained as the Docker-Dependabot release marker, while the executing binary is rebuilt from the exact release tag and committed upstream revision with a digest-pinned patched Go toolchain. '
+              'The build fails if the fetched tag does not resolve to that revision.\n\n'
+              'CI derives the expected version from the release-marker `FROM` reference and verifies that the rebuilt image reports the same version. '
+              'This makes a Dependabot marker update a review signal: it cannot become a green runtime update until the source version/commit are intentionally synchronized. '
+              'Built-image Trivy then evaluates the produced runtime, covering both final OS packages and vulnerabilities compiled into the Go binary.\n\n'
+              'The source rebuild is intentional for k6 2.2.0 because its official image was compiled with a Go toolchain containing fixed HIGH vulnerabilities; updating only Alpine packages would leave those findings in the binary. '
+              'The project image remains non-root and deliberately non-traffic-generating by default: starting it without an explicit scenario command runs `k6 version`. '
+              'Traffic therefore requires an explicit `run ...` command plus a valid `K6_BASE_URL`; sustained traffic still requires the additional opt-in and exact-host allowlist.'
+          )
+          text = replace_once(
+              text,
+              r'`docker/Dockerfile` is the single tracked source for the k6 runtime image used by CI and extended profile contracts\..*?The image default command is deliberately non-traffic-generating: starting the image without an explicit scenario command runs `k6 version`\. Traffic therefore requires an explicit `run \.\.\.` command plus a valid `K6_BASE_URL`; sustained traffic still requires the additional opt-in and exact-host allowlist\.',
+              strategy_runtime,
+              'strategy packaged runtime'
+          )
           strategy.write_text(text)
           PY
       - name: Validate documentation contract
