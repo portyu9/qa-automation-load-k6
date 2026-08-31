@@ -48,11 +48,11 @@ This contract prevents raw control characters, whitespace, oversized values, or 
 
 ## Packaged runtime ownership
 
-`docker/Dockerfile` is the single tracked source for the k6 runtime image used by CI and extended profile contracts. Workflows build that Dockerfile instead of independently hard-coding a second `grafana/k6:<version>` reference in shell commands.
+`docker/Dockerfile` is the single tracked runtime/provenance source used by CI and extended profile contracts. A digest-pinned official k6 stage is retained as the Docker-Dependabot release marker, while the executing binary is rebuilt from the exact release tag and committed upstream revision with a digest-pinned patched Go toolchain. The build fails if the fetched tag does not resolve to that revision.
 
-This gives dependency automation one authoritative runtime source and prevents workflow/runtime drift. CI derives the expected runtime version from the Dockerfile and verifies the built image reports that version.
+CI derives the expected version from the release-marker `FROM` reference and verifies that the rebuilt image reports the same version. This makes a Dependabot marker update a review signal: it cannot become a green runtime update until the source version/commit are intentionally synchronized. Built-image Trivy then evaluates the produced runtime, covering both final OS packages and vulnerabilities compiled into the Go binary.
 
-The image default command is deliberately non-traffic-generating: starting the image without an explicit scenario command runs `k6 version`. Traffic therefore requires an explicit `run ...` command plus a valid `K6_BASE_URL`; sustained traffic still requires the additional opt-in and exact-host allowlist.
+The source rebuild is intentional for k6 2.2.0 because its official image was compiled with a Go toolchain containing fixed HIGH vulnerabilities; updating only Alpine packages would leave those findings in the binary. The project image remains non-root and deliberately non-traffic-generating by default: starting it without an explicit scenario command runs `k6 version`. Traffic therefore requires an explicit `run ...` command plus a valid `K6_BASE_URL`; sustained traffic still requires the additional opt-in and exact-host allowlist.
 
 ## Deterministic smoke strategy
 
@@ -154,7 +154,7 @@ A threshold failure must be investigated in context of achieved throughput and g
 
 ## Evidence and triage
 
-`reports/summary.json` is the primary machine-readable artifact, accompanied by the native text summary. It records run identity, target host, `targetClass`, headline HTTP/check/business metrics, native metric detail, and explicit threshold-breach information.
+`reports/summary.json` is the primary machine-readable artifact, accompanied by a compact text headline. It records run identity, target host, `targetClass`, headline HTTP/check/business metrics, and explicit threshold-breach information. Broad native k6 metrics, root-group trees, and runtime state are intentionally not retained by default; CI rejects those fields in the allowlisted summary contract.
 
 Triage order:
 
@@ -168,7 +168,7 @@ Triage order:
 8. which threshold expressions breached?;
 9. for real performance runs, what did service/resource observability show during the same run ID/time window?
 
-Do not interpret one p95 number without workload context.
+Required smoke CI also rejects missing/empty summary files, mismatched run/target identity, zero request or business-attempt evidence, unacceptable check/success/failure rates, and any retained threshold breach. Do not interpret one p95 number without workload context.
 
 ## Failure classification
 
@@ -220,7 +220,7 @@ A k6 framework change is ready when:
 - no required CI path depends on a public or deployed service;
 - endpoint tags remain authoritative and bounded;
 - business and native metrics remain separately interpretable;
-- summary artifacts identify run/target class and threshold breaches;
+- summary artifacts identify run/target class and threshold breaches, remain allowlisted, and prove non-zero smoke work;
 - threshold comparisons match the declared inclusive policy boundaries;
 - threshold policy changes are explicit and reviewed separately from workload shape;
 - no sustained profile is added to ordinary CI against an uncontrolled target;
