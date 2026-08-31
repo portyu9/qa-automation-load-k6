@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: k6-${{ github.workflow }}-${{ github.ref }}
+  group: k6-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 env:
@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Validate shell refusal contract
         run: bash scripts/test_guardrails.sh
       - name: Validate local fixture syntax
@@ -148,15 +148,14 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - name: Prepare report directory
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Prepare writable report directory without pre-creating evidence
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p reports
-          : > reports/summary.txt
-          : > reports/summary.json
-          chmod a+rw reports/summary.txt reports/summary.json
+          rm -f reports/summary.txt reports/summary.json
+          chmod a+rwx reports
       - name: Build tracked k6 image
         run: docker build -f docker/Dockerfile -t qa-k6:smoke .
       - name: Run pinned k6 smoke gate against repository-owned fixture
@@ -203,14 +202,34 @@ jobs:
             -w /src \
             qa-k6:smoke \
             run tests/smoke.js
-      - name: Verify machine summary remains allowlisted
+      - name: Validate meaningful allowlisted smoke evidence
         shell: bash
         run: |
           set -euo pipefail
-          jq -e '
+          test -s reports/summary.json
+          test -s reports/summary.txt
+          grep -F "runId=${K6_RUN_ID}" reports/summary.txt >/dev/null
+          jq --arg run_id "$K6_RUN_ID" -e '
             .schemaVersion == 1 and
             (.run | type == "object") and
+            .run.runId == $run_id and
+            .run.targetHost == "127.0.0.1" and
+            .run.targetClass == "local-fixture" and
             (.headline | type == "object") and
+            (.headline.requests | type == "number") and
+            .headline.requests >= 3 and
+            (.headline.failedRate | type == "number") and
+            .headline.failedRate <= 0.01 and
+            (.headline.checksRate | type == "number") and
+            .headline.checksRate >= 0.99 and
+            (.headline.businessAttempts | type == "number") and
+            .headline.businessAttempts >= 3 and
+            (.headline.businessSuccessRate | type == "number") and
+            .headline.businessSuccessRate >= 0.99 and
+            (.headline.businessFailureRate | type == "number") and
+            .headline.businessFailureRate <= 0.01 and
+            (.headline.thresholdBreaches | type == "array") and
+            (.headline.thresholdBreaches | length) == 0 and
             (has("metrics") | not) and
             (has("rootGroup") | not) and
             (has("state") | not)
@@ -237,16 +256,16 @@ jobs:
               echo "- p95: \`${p95} ms\`"
               echo "- Check rate: \`${checks}\`"
               echo "- Threshold breaches: \`${breaches}\`"
-              echo '- Evidence: allowlisted k6 summary JSON + text headline'
+              echo '- Evidence: validated allowlisted k6 summary JSON + text headline'
             } >> "$GITHUB_STEP_SUMMARY"
           else
             printf '### k6 · smoke\n\nNo structured summary was produced; inspect the smoke step.\n' >> "$GITHUB_STEP_SUMMARY"
           fi
       - name: Upload k6 summary
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: k6-smoke-summary
+          name: k6-smoke-summary-${{ github.run_id }}
           path: reports/
-          if-no-files-found: ignore
+          if-no-files-found: error
           retention-days: 14

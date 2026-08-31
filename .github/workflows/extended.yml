@@ -18,7 +18,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: k6-extended-${{ github.ref }}
+  group: k6-extended-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -35,7 +35,7 @@ jobs:
       K6_ALLOW_LOAD_TEST: "true"
       K6_ALLOWED_HOSTS: example.invalid
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Prepare evidence directory
         run: mkdir -p reports
       - name: Build tracked k6 image
@@ -81,8 +81,12 @@ jobs:
           qa-k6:extended
           inspect --include-system-env-vars tests/${{ matrix.profile }}.js
           > reports/${{ matrix.profile }}-inspect.json
-      - name: Verify inspection evidence is non-empty
-        run: test -s reports/${{ matrix.profile }}-inspect.json
+      - name: Verify inspection evidence is non-empty JSON
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s reports/${{ matrix.profile }}-inspect.json
+          jq -e 'type == "object"' reports/${{ matrix.profile }}-inspect.json >/dev/null
       - name: Publish profile observability summary
         if: always()
         run: |
@@ -97,11 +101,11 @@ jobs:
           } | tee reports/${{ matrix.profile }}-extended-summary.md >> "$GITHUB_STEP_SUMMARY"
       - name: Upload extended evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: k6-${{ matrix.profile }}-profile-contract
+          name: k6-${{ matrix.profile }}-profile-contract-${{ github.run_id }}
           path: |
             reports/${{ matrix.profile }}-inspect.json
             reports/${{ matrix.profile }}-extended-summary.md
-          if-no-files-found: ignore
+          if-no-files-found: error
           retention-days: 14

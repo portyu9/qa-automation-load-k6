@@ -12,15 +12,37 @@ permissions:
   contents: read
 
 concurrency:
-  group: security-${{ github.repository }}-${{ github.ref }}
+  group: security-${{ github.repository }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
-  trivy:
+  codeql:
+    name: CodeQL
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+        with:
+          languages: javascript-typescript
+          queries: security-extended
+      - name: Analyze
+        uses: github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+
+  trivy-repository:
+    name: Trivy repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Prepare evidence directory
         run: mkdir -p reports/security
       - name: Scan dependencies, configuration, and repository secrets
@@ -35,7 +57,7 @@ jobs:
           format: json
           output: reports/security/trivy.json
           exit-code: "1"
-      - name: Publish security summary
+      - name: Publish repository security summary
         if: always()
         shell: bash
         run: |
@@ -43,14 +65,14 @@ jobs:
           report="reports/security/trivy.json"
           summary="reports/security/summary.md"
           if [[ ! -s "$report" ]]; then
-            printf '### Security gate\n\nTrivy did not produce a report. Inspect the scan step for setup/runtime failure.\n' | tee "$summary" >> "$GITHUB_STEP_SUMMARY"
-            exit 0
+            printf '### Repository security gate\n\nTrivy did not produce a report. Inspect the scan step for setup/runtime failure.\n' | tee "$summary" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
           fi
           vulnerabilities=$(jq '[.Results[]? | .Vulnerabilities[]?] | length' "$report")
           misconfigurations=$(jq '[.Results[]? | .Misconfigurations[]?] | length' "$report")
           secrets=$(jq '[.Results[]? | .Secrets[]?] | length' "$report")
           {
-            echo '### Open-source security gate'
+            echo '### Repository security gate'
             echo
             echo '| Signal | Findings |'
             echo '| --- | ---: |'
@@ -59,14 +81,87 @@ jobs:
             echo "| Gated secret findings | ${secrets} |"
             echo
             echo '- Scanner: Trivy v0.74.0'
-            echo '- Scope: repository filesystem, dependency manifests/locks, supported configuration files, and committed secret material'
-            echo '- Policy: gated findings retain a nonzero scan result; JSON evidence is preserved for triage'
+            echo '- Scope: repository filesystem, supported configuration, dependency metadata, and committed secret material'
           } | tee "$summary" >> "$GITHUB_STEP_SUMMARY"
-      - name: Upload security evidence
+      - name: Upload repository security evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: trivy-security-evidence
+          name: trivy-repository-evidence-${{ github.run_id }}
           path: reports/security/
-          if-no-files-found: ignore
+          if-no-files-found: error
           retention-days: 14
+
+  container-image:
+    name: Trivy k6 image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Prepare evidence directory
+        run: mkdir -p reports/security
+      - name: Build tracked k6 image
+        run: docker build -f docker/Dockerfile -t qa-k6:security .
+      - name: Scan built k6 image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: v0.74.0
+          scan-type: image
+          image-ref: qa-k6:security
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          format: json
+          output: reports/security/container-image.json
+          exit-code: "1"
+      - name: Upload container security evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: trivy-container-evidence-${{ github.run_id }}
+          path: reports/security/container-image.json
+          if-no-files-found: error
+          retention-days: 14
+
+  dependency-review:
+    name: dependency-review
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Probe GitHub Dependency graph
+        id: dependency-graph
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh api \
+            -H 'Accept: application/vnd.github+json' \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            "repos/$GITHUB_REPOSITORY/dependency-graph/sbom" >/dev/null 2>&1; then
+            echo 'available=true' >> "$GITHUB_OUTPUT"
+            echo 'GitHub Dependency graph is available; running change-aware Dependency Review.'
+          else
+            echo 'available=false' >> "$GITHUB_OUTPUT"
+            echo '::warning::GitHub Dependency graph is unavailable; repository and built-image Trivy remain independent gates, but change-aware Dependency Review cannot run.'
+            {
+              echo '### Dependency Review fallback'
+              echo
+              echo 'GitHub Dependency graph is unavailable for this repository, so pull-request dependency-diff analysis cannot run.'
+              echo 'Independent repository and built-image Trivy jobs remain required.'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Review dependency changes
+        if: steps.dependency-graph.outputs.available == 'true'
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: high
+      - name: Confirm independent fallback gates
+        if: steps.dependency-graph.outputs.available != 'true'
+        run: echo 'Dependency Review service unavailable; repository and built-image Trivy jobs remain required independent gates.'

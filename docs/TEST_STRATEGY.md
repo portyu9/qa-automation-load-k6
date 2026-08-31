@@ -154,7 +154,7 @@ A threshold failure must be investigated in context of achieved throughput and g
 
 ## Evidence and triage
 
-`reports/summary.json` is the primary machine-readable artifact, accompanied by the native text summary. It records run identity, target host, `targetClass`, headline HTTP/check/business metrics, native metric detail, and explicit threshold-breach information.
+`reports/summary.json` is the primary machine-readable artifact, accompanied by a compact text headline. It records run identity, target host, `targetClass`, headline HTTP/check/business metrics, and explicit threshold-breach information. Broad native k6 metrics, root-group trees, and runtime state are intentionally not retained by default; CI rejects those fields in the allowlisted summary contract.
 
 Triage order:
 
@@ -168,7 +168,7 @@ Triage order:
 8. which threshold expressions breached?;
 9. for real performance runs, what did service/resource observability show during the same run ID/time window?
 
-Do not interpret one p95 number without workload context.
+Required smoke CI also rejects missing/empty summary files, mismatched run/target identity, zero request or business-attempt evidence, unacceptable check/success/failure rates, and any retained threshold breach. Do not interpret one p95 number without workload context.
 
 ## Failure classification
 
@@ -220,7 +220,7 @@ A k6 framework change is ready when:
 - no required CI path depends on a public or deployed service;
 - endpoint tags remain authoritative and bounded;
 - business and native metrics remain separately interpretable;
-- summary artifacts identify run/target class and threshold breaches;
+- summary artifacts identify run/target class and threshold breaches, remain allowlisted, and prove non-zero smoke work;
 - threshold comparisons match the declared inclusive policy boundaries;
 - threshold policy changes are explicit and reviewed separately from workload shape;
 - no sustained profile is added to ordinary CI against an uncontrolled target;

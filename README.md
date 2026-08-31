@@ -33,7 +33,7 @@ A k6 performance quality-engineering framework for **smoke, load, stress, and so
 | Load | Can expected demand satisfy service objectives? | Explicit operator execution | k6 metrics + thresholds |
 | Stress | Where does controlled degradation begin? | Explicit operator execution | k6 metrics + failure shape |
 | Soak | Does stable demand expose cumulative degradation? | Explicit operator execution | Time-dependent metrics |
-| Security | Repository dependency/configuration exposure | No target traffic | Trivy findings |
+| Security | Source, repository, and packaged-runtime exposure | No target traffic | CodeQL + repository/image Trivy + Dependency Review when available |
 | Documentation | README/workflow/governance consistency | No target traffic | Actions status |
 
 ## Architecture
@@ -233,7 +233,7 @@ Endpoint/scenario tags make aggregate performance explainable without encoding h
 - request count, HTTP failure rate, p95, and check rate;
 - business attempt count, business success rate, business failure rate, and business p95;
 - explicit threshold-breach tuples;
-- native k6 state/root group/metrics for deeper analysis.
+- no broad native `metrics`, `rootGroup`, or runtime `state` objects by default; the retained JSON is an explicit allowlisted projection.
 
 A p95 number has no meaning without workload context. Interpret latency together with achieved throughput, HTTP/business failures, checks, threshold breaches, and `dropped_iterations`. If the generator did not produce the intended schedule, the experiment answered a different question.
 
@@ -253,9 +253,9 @@ CI builds the image and verifies its startup/runtime contract before using it fo
 
 ## CI topology
 
-- `ci.yml` — zero-traffic guardrails, packaged-runtime contract, low-volume local smoke.
-- `extended.yml` — project-image `k6 inspect` contracts for load/stress/soak with **zero sustained traffic**.
-- `security.yml` — repository vulnerability/misconfiguration analysis.
+- `ci.yml` — zero-traffic guardrails, packaged-runtime contract, low-volume local smoke, and a semantic non-zero summary-evidence gate.
+- `extended.yml` — project-image `k6 inspect` contracts for load/stress/soak with **zero sustained traffic** and non-empty JSON evidence validation.
+- `security.yml` — CodeQL source analysis, repository Trivy, built-image Trivy, and pull-request Dependency Review when GitHub Dependency graph is available.
 - `docs.yml` — deterministic README/governance validation.
 
 No workflow automatically runs sustained load/stress/soak traffic.
@@ -269,9 +269,9 @@ Dependabot maintains **Docker** and **GitHub Actions** dependencies.
 - major Docker/runtime updates remain standalone because k6/runtime behavior can change materially;
 - the Dockerfile is the actual k6 runtime source consumed by CI/extended, avoiding version drift between manifest and workflow shell;
 - Actions are reviewed as executable supply-chain dependencies;
-- dependency PRs must clear zero-traffic guardrails, packaged-image startup, local smoke, extended inspect, security, and docs gates.
+- dependency PRs are evaluated by zero-traffic guardrails, packaged-image startup, local smoke, extended inspect, security, and docs workflows.
 
-Dependabot does not replace image pinning, non-root container policy, Trivy, or workload authorization.
+Dependabot does not replace digest pinning, non-root container policy, CodeQL, repository/image Trivy, Dependency Review, or workload authorization.
 
 ## Failure triage
 
