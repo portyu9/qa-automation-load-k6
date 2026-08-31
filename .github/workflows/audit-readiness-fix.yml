@@ -1,0 +1,51 @@
+name: audit-readiness-fix
+
+on:
+  push:
+    branches: [audit/comprehensive-20260831]
+
+permissions:
+  contents: write
+
+jobs:
+  patch-readiness:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: audit/comprehensive-20260831
+      - name: Harden loopback readiness budget and diagnostics
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('.github/workflows/ci.yml')
+          text = path.read_text()
+          replacements = [
+              ('for _ in {1..40}; do', 'for _ in {1..100}; do'),
+              ('if curl --fail --silent --show-error http://127.0.0.1:4020/health >/dev/null; then', 'if curl --fail --silent --show-error --connect-timeout 1 --max-time 1 http://127.0.0.1:4020/health >/dev/null 2>&1; then'),
+              ('if [[ "$ready" != "true" ]]; then\n            cat /tmp/k6-local-api.log >&2\n            exit 1\n          fi', 'if [[ "$ready" != "true" ]]; then\n            echo "repository-owned local API did not become ready within 10 seconds" >&2\n            ps -p "$api_pid" -o pid=,stat=,etime=,cmd= >&2 || true\n            cat /tmp/k6-local-api.log >&2\n            exit 1\n          fi'),
+          ]
+          for old, new in replacements:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'expected exactly one readiness replacement for {old!r}, got {count}')
+              text = text.replace(old, new)
+          path.write_text(text)
+          PY
+          git diff --check
+          grep -F 'for _ in {1..100}; do' .github/workflows/ci.yml
+          grep -F -- '--connect-timeout 1 --max-time 1' .github/workflows/ci.yml
+          grep -F 'did not become ready within 10 seconds' .github/workflows/ci.yml
+      - name: Commit validated readiness hardening
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add .github/workflows/ci.yml
+          git diff --cached --check
+          git commit -m "Harden k6 smoke fixture readiness"
+          git push origin HEAD:audit/comprehensive-20260831
