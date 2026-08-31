@@ -171,20 +171,22 @@ jobs:
           trap cleanup EXIT
 
           ready=false
-          for _ in {1..40}; do
+          for _ in {1..100}; do
             if ! kill -0 "$api_pid" 2>/dev/null; then
               echo "repository-owned local API exited before readiness" >&2
               cat /tmp/k6-local-api.log >&2
               wait "$api_pid" 2>/dev/null || true
               exit 1
             fi
-            if curl --fail --silent --show-error http://127.0.0.1:4020/health >/dev/null; then
+            if curl --fail --silent --show-error --connect-timeout 1 --max-time 1 http://127.0.0.1:4020/health >/dev/null 2>&1; then
               ready=true
               break
             fi
             sleep 0.1
           done
           if [[ "$ready" != "true" ]]; then
+            echo "repository-owned local API did not become ready within 10 seconds" >&2
+            ps -p "$api_pid" -o pid=,stat=,etime=,cmd= >&2 || true
             cat /tmp/k6-local-api.log >&2
             exit 1
           fi
