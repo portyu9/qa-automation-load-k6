@@ -83,8 +83,8 @@ flowchart TD
 | Thresholds | Shared service-level policy is centralized; deviations are explicit. |
 | Business observability | Attempts, success, failure, and business duration are custom metrics tagged with endpoint/scenario context. |
 | Capacity | `dropped_iterations` is a generator/scheduling signal, not automatically a server failure. |
-| Evidence | Native metrics plus business headline values and structured threshold-breach details remain authoritative. |
-| Runtime source | `docker/Dockerfile` pins the k6 runtime; CI/extended build that file rather than duplicating image tags in workflow shell. |
+| Evidence | Native k6 metrics remain runtime signals; retained JSON is an allowlisted headline projection with structured threshold-breach details. |
+| Runtime source | `docker/Dockerfile` owns the upstream release marker, exact source version/commit, patched Go builder, and final runtime image; CI/extended build that file rather than duplicating runtime versions in workflow shell. |
 | Image startup | Starting the project image without an explicit command runs `k6 version`, not a traffic scenario. |
 | Container identity | The project image runs scenario content as non-root user `12345`. |
 
@@ -242,14 +242,13 @@ A p95 number has no meaning without workload context. Interpret latency together
 
 ## Packaged runtime and dependency ownership
 
-`docker/Dockerfile` is the single tracked source for the pinned k6 runtime used by CI and extended profile contracts. The workflows build that Dockerfile instead of independently hard-coding `grafana/k6:<version>` in shell commands.
+`docker/Dockerfile` is the single tracked runtime/provenance source used by CI and extended profile contracts. It retains a digest-pinned official `grafana/k6:<version>` stage as the upstream release marker that Docker Dependabot can observe, but the executing `/usr/bin/k6` is rebuilt from the exact `K6_VERSION` tag and `K6_COMMIT` with a digest-pinned patched Go builder. The source checkout fails unless the fetched release tag resolves to the committed revision.
 
-That matters for two reasons:
+The final Alpine stage is separately digest-pinned, updated during the build, and scanned as the actual produced image. This separation exists because the current official k6 2.2.0 image was compiled with a Go toolchain that had fixed HIGH vulnerabilities; merely upgrading its Alpine packages would not remediate vulnerabilities compiled into the k6 binary.
 
-1. **Dependency ownership** — Dependabot's Docker ecosystem can propose runtime updates at the file that actually controls CI execution.
-2. **Safety ownership** — the image's default command is `k6 version`, so starting it cannot silently run smoke/load/stress/soak. Traffic requires an explicit `run ...` command plus `K6_BASE_URL`; sustained traffic still requires the separate authorization contract.
+Dependency automation is therefore a **release signal, not an automatic runtime switch**. CI derives the expected k6 version from the official release-marker `FROM` line and compares it with the rebuilt binary. If Dependabot changes the marker without the reviewed `K6_VERSION`/`K6_COMMIT` source pins being synchronized, the packaged-runtime gate fails. A runtime update must review the upstream release, synchronize source provenance, and pass guardrails, smoke, extended initialization, CodeQL, repository Trivy, and built-image Trivy.
 
-CI builds the image and verifies its startup/runtime contract before using it for smoke. Extended jobs build the same image and use `inspect` only. A Dockerfile change therefore exercises both packaged-runtime safety and profile initialization.
+The image's default command remains `k6 version`, so starting it cannot silently run smoke/load/stress/soak. Traffic requires an explicit `run ...` command plus `K6_BASE_URL`; sustained traffic still requires the separate authorization contract. CI verifies startup/runtime identity before smoke, while extended jobs build the same image and use `inspect` only.
 
 ## CI topology
 
@@ -267,11 +266,11 @@ Dependabot maintains **Docker** and **GitHub Actions** dependencies.
 - weekly Monday 09:00 America/New_York;
 - grouped minor/patch updates for routine maintenance;
 - major Docker/runtime updates remain standalone because k6/runtime behavior can change materially;
-- the Dockerfile is the actual k6 runtime source consumed by CI/extended, avoiding version drift between manifest and workflow shell;
+- Docker updates surface the upstream release marker; runtime PRs must also synchronize the exact source version/commit, and CI rejects marker/binary version drift;
 - Actions are reviewed as executable supply-chain dependencies;
 - dependency PRs are evaluated by zero-traffic guardrails, packaged-image startup, local smoke, extended inspect, security, and docs workflows.
 
-Dependabot does not replace digest pinning, non-root container policy, CodeQL, repository/image Trivy, Dependency Review, or workload authorization.
+Dependabot does not replace image/source provenance checks, digest pinning, the patched Go toolchain decision, non-root container policy, CodeQL, repository/image Trivy, Dependency Review, or workload authorization.
 
 ## Failure triage
 

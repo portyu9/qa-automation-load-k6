@@ -71,13 +71,13 @@ Primary CI owns fixture lifecycle explicitly: start the Node process, poll `/hea
 
 ## Packaged runtime ownership
 
-`docker/Dockerfile` is the single repository-owned source for the k6 runtime image/version used by CI. Dependabot's Docker ecosystem tracks that file.
+`docker/Dockerfile` is the single repository-owned runtime/provenance source used by CI. Its digest-pinned official `grafana/k6:<version>` stage is an upstream release marker for Docker Dependabot; the executing binary is rebuilt from the exact `K6_VERSION` tag and `K6_COMMIT` with a digest-pinned patched Go toolchain. The build verifies that the fetched tag resolves to the committed source revision before compiling.
 
-CI builds the Dockerfile and derives the expected version from its `FROM grafana/k6:<tag>` reference rather than duplicating the tag in shell commands. This prevents a correct Dependabot image update from failing because a separate workflow literal was not updated.
+CI derives the expected runtime version from the official release-marker `FROM` reference and compares it with the rebuilt image's `k6 version`. A Dependabot marker update therefore fails closed until the reviewed source version/commit are synchronized. The final Alpine runtime is separately pinned, updated during image construction, and scanned after build so OS fixes and vulnerabilities compiled into the Go binary are treated as distinct concerns.
 
-The image is non-root and its default command is `k6 version`. Starting the image without explicit `run ...` arguments therefore generates **zero traffic**. Traffic requires an explicit command plus validated target configuration.
+The custom rebuild is deliberate: the official k6 2.2.0 image was built with a Go version that had fixed HIGH vulnerabilities, which an Alpine-only package upgrade could not remove. The produced image remains non-root and its default command is `k6 version`, so starting it without explicit `run ...` arguments generates **zero traffic**.
 
-Extended `inspect` and primary smoke gates use the same tracked image, so the dependency source, safety checks, and executing runtime cannot drift independently.
+Extended `inspect` and primary smoke gates use the same tracked image. Guardrails, runtime-version verification, built-image Trivy, and exact source-revision verification make provenance drift a failing condition rather than a documentation convention.
 
 ## Defense-in-depth authorization
 
@@ -144,7 +144,7 @@ Built-in request/check metrics are augmented by named business metrics:
 
 - `business_attempts` (`Counter`);
 - `business_success` (`Rate`);
-- `business_failures` (`Counter`);
+- `business_failures` (`Rate`);
 - `business_duration` (`Trend`).
 
 The client updates these from the same explicit endpoint/scenario tag set used by HTTP/check metrics. Business success is therefore a first-class threshold/evidence signal rather than inferred later from console text.
@@ -168,7 +168,7 @@ Important distinctions:
 - request totals/error rate/latency;
 - check rate;
 - business attempts/success/failures/duration;
-- raw metric summaries;
+- allowlisted headline HTTP/check/business metric values;
 - explicit threshold-breach details.
 
 Threshold failures should be interpreted together with achieved request volume and dropped iterations. A p95 breach at a materially different achieved throughput than intended answers a different question from a p95 breach at the planned rate.
@@ -199,7 +199,7 @@ New performance behavior should:
 2. preserve the target validation/authorization/correlation boundary;
 3. keep required CI independent of public APIs and external-provider uptime;
 4. keep ordinary CI limited to repository-owned low-volume smoke plus zero-traffic guardrail validation;
-5. preserve the Dockerfile as the single tracked runtime-image source;
+5. preserve the Dockerfile as the single tracked runtime/provenance source and keep its release marker, source pins, builder, and produced image coherent;
 6. choose an executor that matches the performance question;
 7. keep threshold policy centralized and reviewable;
 8. preserve authoritative low-cardinality endpoint/scenario tags;

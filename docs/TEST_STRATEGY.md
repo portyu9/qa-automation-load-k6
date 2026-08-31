@@ -48,11 +48,11 @@ This contract prevents raw control characters, whitespace, oversized values, or 
 
 ## Packaged runtime ownership
 
-`docker/Dockerfile` is the single tracked source for the k6 runtime image used by CI and extended profile contracts. Workflows build that Dockerfile instead of independently hard-coding a second `grafana/k6:<version>` reference in shell commands.
+`docker/Dockerfile` is the single tracked runtime/provenance source used by CI and extended profile contracts. A digest-pinned official k6 stage is retained as the Docker-Dependabot release marker, while the executing binary is rebuilt from the exact release tag and committed upstream revision with a digest-pinned patched Go toolchain. The build fails if the fetched tag does not resolve to that revision.
 
-This gives dependency automation one authoritative runtime source and prevents workflow/runtime drift. CI derives the expected runtime version from the Dockerfile and verifies the built image reports that version.
+CI derives the expected version from the release-marker `FROM` reference and verifies that the rebuilt image reports the same version. This makes a Dependabot marker update a review signal: it cannot become a green runtime update until the source version/commit are intentionally synchronized. Built-image Trivy then evaluates the produced runtime, covering both final OS packages and vulnerabilities compiled into the Go binary.
 
-The image default command is deliberately non-traffic-generating: starting the image without an explicit scenario command runs `k6 version`. Traffic therefore requires an explicit `run ...` command plus a valid `K6_BASE_URL`; sustained traffic still requires the additional opt-in and exact-host allowlist.
+The source rebuild is intentional for k6 2.2.0 because its official image was compiled with a Go toolchain containing fixed HIGH vulnerabilities; updating only Alpine packages would leave those findings in the binary. The project image remains non-root and deliberately non-traffic-generating by default: starting it without an explicit scenario command runs `k6 version`. Traffic therefore requires an explicit `run ...` command plus a valid `K6_BASE_URL`; sustained traffic still requires the additional opt-in and exact-host allowlist.
 
 ## Deterministic smoke strategy
 
