@@ -23,11 +23,14 @@ RUN git init . \
 # Keep emergency source-build security overrides in a real Go module so
 # Dependabot can propose updates and CI can qualify them. The override is
 # intentionally applied to the ephemeral upstream checkout only; the tracked
-# k6 release tag and commit remain unchanged and auditable.
+# k6 release tag and commit remain unchanged and auditable. k6 vendors its Go
+# graph, so the ephemeral vendor tree is regenerated after the override before
+# compiling; no generated vendor content is committed to this repository.
 COPY docker/security-overrides/go.mod /tmp/k6-security-overrides.mod
 RUN X_CRYPTO_VERSION="$(awk '$1 == "require" && $2 == "golang.org/x/crypto" { print $3 } $1 == "golang.org/x/crypto" { print $2 }' /tmp/k6-security-overrides.mod)" \
     && test -n "${X_CRYPTO_VERSION}" \
-    && go get "golang.org/x/crypto@${X_CRYPTO_VERSION}" \
+    && GOFLAGS=-mod=mod go get "golang.org/x/crypto@${X_CRYPTO_VERSION}" \
+    && go mod vendor \
     && CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
        go build -trimpath -o /out/k6
 
