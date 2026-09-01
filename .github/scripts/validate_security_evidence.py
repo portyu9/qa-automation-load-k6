@@ -8,6 +8,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 DOCKERFILE = ROOT / "docker" / "Dockerfile"
+SECURITY_OVERRIDE_MOD = ROOT / "docker" / "security-overrides" / "go.mod"
 TRIVY_VERSION = "0.74.0"
 
 
@@ -68,6 +69,20 @@ def docker_versions() -> tuple[str, str]:
     return k6.group(1), go.group(1)
 
 
+def security_override_version() -> str:
+    if not SECURITY_OVERRIDE_MOD.is_file():
+        raise ValueError("tracked Go security override module is missing")
+    text = SECURITY_OVERRIDE_MOD.read_text(encoding="utf-8")
+    match = re.search(
+        r"(?:^require\s+golang\.org/x/crypto\s+|^\s*golang\.org/x/crypto\s+)(v\d+\.\d+\.\d+)\s*$",
+        text,
+        re.MULTILINE,
+    )
+    if not match:
+        raise ValueError("unable to derive golang.org/x/crypto version from tracked security override")
+    return match.group(1)
+
+
 def package_map(result: dict) -> dict[str, set[str]]:
     packages = result.get("Packages") or []
     if not isinstance(packages, list):
@@ -81,8 +96,17 @@ def package_map(result: dict) -> dict[str, set[str]]:
     return mapped
 
 
+def require_package(packages: dict[str, set[str]], name: str, version: str) -> None:
+    observed = packages.get(name, set())
+    if version not in observed:
+        raise ValueError(
+            f"built-image Go inventory does not prove {name} {version}; observed={sorted(observed)}"
+        )
+
+
 def validate_image(report: dict) -> None:
     k6_version, go_version = docker_versions()
+    x_crypto_version = security_override_version()
     os_results = [
         result
         for result in report["Results"]
@@ -108,15 +132,14 @@ def validate_image(report: dict) -> None:
         raise ValueError(f"built-image Go package inventory is unexpectedly small: {len(go_packages)}")
 
     packages = package_map(go_results[0])
-    expected = {
-        "go.k6.io/k6/v2": f"v{k6_version}",
-        "stdlib": f"v{go_version}",
-    }
-    for name, version in expected.items():
-        if version not in packages.get(name, set()):
-            raise ValueError(
-                f"built-image Go inventory does not prove {name} {version}; observed={sorted(packages.get(name, set()))}"
-            )
+    # The upstream source tag/commit remains exact, but applying the governed
+    # dependency override deliberately dirties that checkout. Requiring +dirty
+    # prevents the evidence layer from pretending the binary is pristine while
+    # the separate provenance validator still binds it to the exact upstream
+    # tag/commit and tracked override input.
+    require_package(packages, "go.k6.io/k6/v2", f"v{k6_version}+dirty")
+    require_package(packages, "stdlib", f"v{go_version}")
+    require_package(packages, "golang.org/x/crypto", x_crypto_version)
 
     vulnerabilities = findings(report, "Vulnerabilities")
     if vulnerabilities:
@@ -126,7 +149,8 @@ def validate_image(report: dict) -> None:
 
     print(
         f"built-image Trivy evidence: version={TRIVY_VERSION} alpinePackages={len(os_packages)} "
-        f"goPackages={len(go_packages)} k6=v{k6_version} go=v{go_version} vulnerabilities={vulnerabilities}"
+        f"goPackages={len(go_packages)} k6=v{k6_version}+dirty go=v{go_version} "
+        f"x-crypto={x_crypto_version} vulnerabilities={vulnerabilities}"
     )
 
 
