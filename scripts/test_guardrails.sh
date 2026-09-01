@@ -55,4 +55,16 @@ if grep -Fq 'password' <<<"$wrapper_output" || grep -Fq 'access_token' <<<"$wrap
   exit 1
 fi
 
+unsafe_run_id=$'unsafe\nforged-log-line'
+wrapper_output=$(K6_BASE_URL=https://example.test K6_RUN_ID="$unsafe_run_id" \
+  "$ROOT/scripts/run_k6.sh" smoke --quiet)
+if grep -Fq 'unsafe' <<<"$wrapper_output" || grep -Fq 'forged-log-line' <<<"$wrapper_output"; then
+  echo 'unvalidated k6 run identifier leaked to wrapper output' >&2
+  exit 1
+fi
+if ! grep -Fq 'runId=<validated-by-k6>' <<<"$wrapper_output"; then
+  echo 'wrapper did not retain the run-id validation boundary marker' >&2
+  exit 1
+fi
+
 echo 'k6 shell guardrail contract: ok'
