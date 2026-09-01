@@ -28,13 +28,13 @@ A k6 performance quality-engineering framework for **smoke, load, stress, and so
 | Guardrails | Will unsafe/missing configuration be rejected? | **Zero traffic** | Shell contract + `k6 inspect` |
 | Packaged-runtime safety | Does the project image start without generating traffic? | **Zero traffic** | Built image + `k6 version` contract |
 | Smoke | Does request/check/metric/summary behavior work end to end? | Very low volume to repository loopback API | Structured summary |
-| Extended profiles | Do load/stress/soak initialize under authorized config? | **Zero traffic — inspect only** | Per-profile inspect evidence |
+| Extended profiles | Do load/stress/soak initialize with the intended workload and threshold policy? | **Zero traffic — inspect only** | Exact resolved scenario + threshold evidence |
 | Business metrics | Do domain attempts/success/failure/duration remain observable and tagged? | Same scenario traffic | Custom k6 metrics + summary headline |
 | Load | Can expected demand satisfy service objectives? | Explicit operator execution | k6 metrics + thresholds |
 | Stress | Where does controlled degradation begin? | Explicit operator execution | k6 metrics + failure shape |
 | Soak | Does stable demand expose cumulative degradation? | Explicit operator execution | Time-dependent metrics |
 | Security | Source, repository, and packaged-runtime exposure | No target traffic | CodeQL + repository/image Trivy + Dependency Review when available |
-| Documentation | README/workflow/governance consistency | No target traffic | Actions status |
+| Documentation | README/workflow/governance consistency | No target traffic | README + immutable workflow dependency contracts |
 
 ## Architecture
 
@@ -142,11 +142,12 @@ K6_RUN_ID=local-smoke \
 bash scripts/run_k6.sh smoke
 ```
 
-Validate guardrails without scenario traffic:
+Validate guardrails and static repository contracts without scenario traffic:
 
 ```bash
 bash scripts/test_guardrails.sh
 python .github/scripts/validate_readme.py
+python .github/scripts/validate_workflow_pins.py
 ```
 
 Build and start the packaged runtime without traffic:
@@ -252,12 +253,14 @@ The image's default command remains `k6 version`, so starting it cannot silently
 
 ## CI topology
 
-- `ci.yml` — zero-traffic guardrails, packaged-runtime contract, low-volume local smoke, and a semantic non-zero summary-evidence gate.
-- `extended.yml` — project-image `k6 inspect` contracts for load/stress/soak with **zero sustained traffic** and non-empty JSON evidence validation.
-- `security.yml` — CodeQL source analysis, repository Trivy, built-image Trivy, and pull-request Dependency Review when GitHub Dependency graph is available.
-- `docs.yml` — deterministic README/governance validation.
+- `ci.yml` — zero-traffic guardrails, packaged-runtime contract, low-volume local smoke, semantic summary evidence, and stable `ci-gate` aggregation.
+- `extended.yml` — project-image `k6 inspect` contracts for load/stress/soak on every pull request, with **zero sustained traffic**, exact resolved scenario/threshold validation, and stable `extended-gate` aggregation.
+- `security.yml` — CodeQL source analysis, repository Trivy, built-image Trivy, pull-request Dependency Review when GitHub Dependency graph is available, and stable `security-gate` aggregation.
+- `docs.yml` — deterministic README/governance validation plus immutable external workflow dependency pin enforcement.
 
 No workflow automatically runs sustained load/stress/soak traffic.
+
+For branch enforcement, use the stable aggregate statuses `ci-gate`, `extended-gate`, and `security-gate`, plus the single docs `static-contracts` job. This keeps branch rules stable when internal job structure changes while preserving the independent evidence domains.
 
 ## Dependency maintenance
 

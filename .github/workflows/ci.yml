@@ -271,3 +271,23 @@ jobs:
           path: reports/
           if-no-files-found: error
           retention-days: 14
+
+  ci-gate:
+    name: ci-gate
+    if: always()
+    needs: [guardrails, smoke]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require guardrails and deterministic smoke
+        shell: bash
+        env:
+          GUARDRAILS_RESULT: ${{ needs.guardrails.result }}
+          SMOKE_RESULT: ${{ needs.smoke.result }}
+        run: |
+          set -euo pipefail
+          if [[ "$GUARDRAILS_RESULT" != "success" || "$SMOKE_RESULT" != "success" ]]; then
+            echo "guardrails=$GUARDRAILS_RESULT smoke=$SMOKE_RESULT" >&2
+            exit 1
+          fi
+          echo "Guardrails and deterministic smoke passed."

@@ -4,12 +4,6 @@ on:
   push:
     branches: [main]
   pull_request:
-    paths:
-      - "docker/**"
-      - "lib/**"
-      - "tests/**"
-      - "scripts/**"
-      - ".github/workflows/extended.yml"
   schedule:
     - cron: "23 8 * * 3"
   workflow_dispatch:
@@ -81,12 +75,107 @@ jobs:
           qa-k6:extended
           inspect --include-system-env-vars tests/${{ matrix.profile }}.js
           > reports/${{ matrix.profile }}-inspect.json
-      - name: Verify inspection evidence is non-empty JSON
+      - name: Validate resolved ${{ matrix.profile }} scenario and threshold evidence
         shell: bash
+        env:
+          PROFILE: ${{ matrix.profile }}
         run: |
           set -euo pipefail
-          test -s reports/${{ matrix.profile }}-inspect.json
-          jq -e 'type == "object"' reports/${{ matrix.profile }}-inspect.json >/dev/null
+          report="reports/${PROFILE}-inspect.json"
+          test -s "$report"
+
+          case "$PROFILE" in
+            load)
+              jq -e '
+                (.scenarios | keys) == ["load"] and
+                .scenarios.load == {
+                  "executor": "ramping-arrival-rate",
+                  "startTime": null,
+                  "gracefulStop": "30s",
+                  "env": null,
+                  "exec": null,
+                  "tags": {"profile": "load"},
+                  "startRate": 2,
+                  "timeUnit": "1s",
+                  "stages": [
+                    {"duration": "30s", "target": 5},
+                    {"duration": "1m0s", "target": 10},
+                    {"duration": "30s", "target": 0}
+                  ],
+                  "preAllocatedVUs": 10,
+                  "maxVUs": 50
+                } and
+                .thresholds == {
+                  "business_failures": ["rate<=0.01"],
+                  "business_success": ["rate>=0.99"],
+                  "checks": ["rate>=0.99"],
+                  "dropped_iterations": ["count<1"],
+                  "http_req_duration": ["p(95)<500"],
+                  "http_req_failed": ["rate<=0.01"]
+                }
+              ' "$report" >/dev/null
+              ;;
+            stress)
+              jq -e '
+                (.scenarios | keys) == ["stress"] and
+                .scenarios.stress == {
+                  "executor": "ramping-arrival-rate",
+                  "startTime": null,
+                  "gracefulStop": "30s",
+                  "env": null,
+                  "exec": null,
+                  "tags": {"profile": "stress"},
+                  "startRate": 2,
+                  "timeUnit": "1s",
+                  "stages": [
+                    {"duration": "30s", "target": 10},
+                    {"duration": "30s", "target": 20},
+                    {"duration": "30s", "target": 30},
+                    {"duration": "30s", "target": 0}
+                  ],
+                  "preAllocatedVUs": 20,
+                  "maxVUs": 100
+                } and
+                .thresholds == {
+                  "business_failures": ["rate<=0.03"],
+                  "business_success": ["rate>=0.97"],
+                  "checks": ["rate>=0.97"],
+                  "http_req_duration": ["p(95)<1000"],
+                  "http_req_failed": ["rate<=0.03"]
+                }
+              ' "$report" >/dev/null
+              ;;
+            soak)
+              jq -e '
+                (.scenarios | keys) == ["soak"] and
+                .scenarios.soak == {
+                  "executor": "constant-arrival-rate",
+                  "startTime": null,
+                  "gracefulStop": "30s",
+                  "env": null,
+                  "exec": null,
+                  "tags": {"profile": "soak"},
+                  "rate": 5,
+                  "timeUnit": "1s",
+                  "duration": "10m0s",
+                  "preAllocatedVUs": 10,
+                  "maxVUs": 50
+                } and
+                .thresholds == {
+                  "business_failures": ["rate<=0.01"],
+                  "business_success": ["rate>=0.99"],
+                  "checks": ["rate>=0.99"],
+                  "dropped_iterations": ["count<1"],
+                  "http_req_duration": ["p(95)<500"],
+                  "http_req_failed": ["rate<=0.01"]
+                }
+              ' "$report" >/dev/null
+              ;;
+            *)
+              echo "unsupported profile contract: $PROFILE" >&2
+              exit 1
+              ;;
+          esac
       - name: Publish profile observability summary
         if: always()
         run: |
@@ -96,6 +185,7 @@ jobs:
             echo "- Run ID: \`${K6_RUN_ID}\`"
             echo '- Execution mode: `k6 inspect` (module/configuration initialization only)'
             echo '- Target identity: `example.invalid` exact allowlist match'
+            echo '- Evidence: exact resolved scenario shape + threshold expressions'
             echo '- Sustained scenario traffic: **not executed**'
             echo "- Job status: \`${{ job.status }}\`"
           } | tee reports/${{ matrix.profile }}-extended-summary.md >> "$GITHUB_STEP_SUMMARY"
@@ -109,3 +199,22 @@ jobs:
             reports/${{ matrix.profile }}-extended-summary.md
           if-no-files-found: error
           retention-days: 14
+
+  extended-gate:
+    name: extended-gate
+    if: always()
+    needs: sustained-profile-contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require every sustained profile contract
+        shell: bash
+        env:
+          PROFILE_RESULT: ${{ needs.sustained-profile-contract.result }}
+        run: |
+          set -euo pipefail
+          if [[ "$PROFILE_RESULT" != "success" ]]; then
+            echo "sustained profile matrix result: $PROFILE_RESULT" >&2
+            exit 1
+          fi
+          echo "All zero-traffic sustained profile contracts passed."
