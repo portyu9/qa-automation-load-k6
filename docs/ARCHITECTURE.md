@@ -75,7 +75,7 @@ Primary CI owns fixture lifecycle explicitly: start the Node process, poll `/hea
 
 CI derives the expected runtime version from the official release-marker `FROM` reference and compares it with the rebuilt image's `k6 version`. A Dependabot marker update therefore fails closed until the reviewed source version/commit are synchronized. The final Alpine runtime is separately pinned, updated during image construction, and scanned after build so OS fixes and vulnerabilities compiled into the Go binary are treated as distinct concerns.
 
-The custom rebuild is deliberate: the official k6 2.2.0 image was built with a Go version that had fixed HIGH vulnerabilities, which an Alpine-only package upgrade could not remove. The produced image remains non-root and its default command is `k6 version`, so starting it without explicit `run ...` arguments generates **zero traffic**.
+The custom rebuild is deliberate: the official k6 image was built with a Go version that had fixed HIGH vulnerabilities, which an Alpine-only package upgrade could not remove. The produced image remains non-root and its default command is `k6 version`, so starting it without explicit `run ...` arguments generates **zero traffic**.
 
 Extended `inspect` and primary smoke gates use the same tracked image. Guardrails, runtime-version verification, built-image Trivy, and exact source-revision verification make provenance drift a failing condition rather than a documentation convention.
 
