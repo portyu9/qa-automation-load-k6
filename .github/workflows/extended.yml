@@ -30,6 +30,10 @@ jobs:
       K6_ALLOWED_HOSTS: example.invalid
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Validate immutable workflow and runtime provenance
+        run: |
+          python3 .github/scripts/validate_workflow_pins.py
+          python3 .github/scripts/validate_runtime_provenance.py
       - name: Prepare evidence directory
         run: mkdir -p reports
       - name: Build tracked k6 image
@@ -186,6 +190,7 @@ jobs:
             echo '- Execution mode: `k6 inspect` (module/configuration initialization only)'
             echo '- Target identity: `example.invalid` exact allowlist match'
             echo '- Evidence: exact resolved scenario shape + threshold expressions'
+            echo '- Runtime provenance: committed immutable Action and Docker image contracts validated before inspection'
             echo '- Sustained scenario traffic: **not executed**'
             echo "- Job status: \`${{ job.status }}\`"
           } | tee reports/${{ matrix.profile }}-extended-summary.md >> "$GITHUB_STEP_SUMMARY"

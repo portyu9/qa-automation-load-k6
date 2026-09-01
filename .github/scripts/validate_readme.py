@@ -1,4 +1,4 @@
-"""Validate repository README contracts without third-party dependencies."""
+"""Validate repository README and executable workflow contracts without third-party dependencies."""
 from __future__ import annotations
 
 import re
@@ -129,6 +129,21 @@ def validate_repository_map(text: str, errors: list[str]) -> None:
         fail("repository map must list at least one directory", errors)
 
 
+def validate_unfiltered_pull_request(workflow: Path, errors: list[str]) -> None:
+    lines = workflow.read_text(encoding="utf-8").splitlines()
+    try:
+        start = lines.index("  pull_request:")
+    except ValueError:
+        fail(f"{workflow.name} must run on pull requests", errors)
+        return
+    for line in lines[start + 1 :]:
+        if re.match(r"^  [A-Za-z0-9_-]+:\s*$", line):
+            break
+        if re.match(r"^\s{4}(?:paths|paths-ignore):", line):
+            fail(f"{workflow.name} pull_request trigger must not be path-filtered", errors)
+            break
+
+
 def validate_stable_gates(text: str, errors: list[str]) -> None:
     for gate, workflow in STABLE_GATES.items():
         if not workflow.is_file():
@@ -139,6 +154,45 @@ def validate_stable_gates(text: str, errors: list[str]) -> None:
             fail(f"workflow does not define stable aggregate job `{gate}`", errors)
         if f"`{gate}`" not in text:
             fail(f"README must document stable aggregate job `{gate}`", errors)
+        validate_unfiltered_pull_request(workflow, errors)
+
+
+def validate_execution_contracts(errors: list[str]) -> None:
+    ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    extended = (ROOT / ".github" / "workflows" / "extended.yml").read_text(encoding="utf-8")
+    security = (ROOT / ".github" / "workflows" / "security.yml").read_text(encoding="utf-8")
+
+    for validator in (
+        ROOT / ".github" / "scripts" / "validate_workflow_pins.py",
+        ROOT / ".github" / "scripts" / "validate_runtime_provenance.py",
+        ROOT / ".github" / "scripts" / "validate_security_evidence.py",
+    ):
+        if not validator.is_file():
+            fail(f"required executable validator is missing: {validator.relative_to(ROOT)}", errors)
+
+    for workflow_name, workflow_text in (("ci.yml", ci), ("extended.yml", extended), ("security.yml", security)):
+        if "validate_workflow_pins.py" not in workflow_text:
+            fail(f"{workflow_name} must execute immutable Action-pin validation", errors)
+        if "validate_runtime_provenance.py" not in workflow_text:
+            fail(f"{workflow_name} must execute Docker runtime provenance validation", errors)
+
+    for required in (
+        ".headline.iterations == 3",
+        ".headline.requests == 5",
+        ".headline.businessAttempts == 5",
+    ):
+        if required not in ci:
+            fail(f"ci.yml is missing deterministic smoke execution evidence: {required}", errors)
+
+    for required in (
+        "scanners: misconfig,secret",
+        "validate_security_evidence.py repository",
+        "list-all-pkgs: true",
+        "validate_security_evidence.py image",
+        "Supply-chain policy",
+    ):
+        if required not in security:
+            fail(f"security.yml is missing required attribution contract: {required}", errors)
 
 
 def main() -> int:
@@ -161,6 +215,7 @@ def main() -> int:
     validate_mermaid(text, errors)
     validate_repository_map(text, errors)
     validate_stable_gates(text, errors)
+    validate_execution_contracts(errors)
 
     if errors:
         print("README contract failed:")
@@ -169,7 +224,7 @@ def main() -> int:
         return 1
 
     print(
-        "README contract: local links, badges, Mermaid, directory-only map, and stable gates are consistent"
+        "README contract: links, badges, Mermaid, directory-only map, stable gates, provenance, smoke evidence, and security attribution are consistent"
     )
     return 0
 

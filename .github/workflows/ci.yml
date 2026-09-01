@@ -23,6 +23,10 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Validate immutable workflow and runtime provenance
+        run: |
+          python3 .github/scripts/validate_workflow_pins.py
+          python3 .github/scripts/validate_runtime_provenance.py
       - name: Validate shell refusal contract
         run: bash scripts/test_guardrails.sh
       - name: Validate local fixture syntax
@@ -218,14 +222,13 @@ jobs:
             .run.targetHost == "127.0.0.1" and
             .run.targetClass == "local-fixture" and
             (.headline | type == "object") and
-            (.headline.requests | type == "number") and
-            .headline.requests >= 3 and
+            .headline.iterations == 3 and
+            .headline.requests == 5 and
             (.headline.failedRate | type == "number") and
             .headline.failedRate <= 0.01 and
             (.headline.checksRate | type == "number") and
             .headline.checksRate >= 0.99 and
-            (.headline.businessAttempts | type == "number") and
-            .headline.businessAttempts >= 3 and
+            .headline.businessAttempts == 5 and
             (.headline.businessSuccessRate | type == "number") and
             .headline.businessSuccessRate >= 0.99 and
             (.headline.businessFailureRate | type == "number") and
@@ -242,6 +245,7 @@ jobs:
         run: |
           set -euo pipefail
           if [[ -s reports/summary.json ]]; then
+            iterations=$(jq -r '.headline.iterations // 0' reports/summary.json)
             requests=$(jq -r '.headline.requests // 0' reports/summary.json)
             failed_rate=$(jq -r '.headline.failedRate // 0' reports/summary.json)
             p95=$(jq -r '.headline.p95Ms // 0' reports/summary.json)
@@ -253,7 +257,8 @@ jobs:
               echo "- Run ID: \`${K6_RUN_ID}\`"
               echo '- Target: repository-owned loopback fixture (`127.0.0.1:4020`)'
               echo "- Job status: \`${{ job.status }}\`"
-              echo "- Requests: \`${requests}\`"
+              echo "- Scenario iterations: \`${iterations}\`"
+              echo "- Requests: \`${requests}\` (setup + 3 scenario iterations + teardown)"
               echo "- HTTP failure rate: \`${failed_rate}\`"
               echo "- p95: \`${p95} ms\`"
               echo "- Check rate: \`${checks}\`"

@@ -36,5 +36,7 @@ if ! command -v k6 >/dev/null 2>&1; then
 fi
 
 mkdir -p reports
-echo "profile=$PROFILE runId=${K6_RUN_ID:-local} target=<validated-by-k6>"
+# Target and run identifiers are validated inside the k6 runtime contract. Do not
+# reflect unvalidated environment content into wrapper logs before that boundary.
+echo "profile=$PROFILE runId=<validated-by-k6> target=<validated-by-k6>"
 k6 run "tests/${PROFILE}.js" "$@"
