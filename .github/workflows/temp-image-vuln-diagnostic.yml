@@ -1,0 +1,42 @@
+name: diagnose-k6-image-vulnerability
+
+on:
+  push:
+    branches: [chore/versionless-docs]
+
+permissions:
+  contents: write
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: Build tracked image
+        run: docker build -f docker/Dockerfile -t qa-k6:diagnostic .
+      - name: Scan without gating
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          version: v0.74.0
+          scan-type: image
+          image-ref: qa-k6:diagnostic
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          list-all-pkgs: true
+          format: json
+          output: /tmp/trivy.json
+          exit-code: "0"
+      - name: Print exact fixed findings
+        run: |
+          jq -r '.Results[]? | .Vulnerabilities[]? | [.VulnerabilityID,.PkgName,.InstalledVersion,.FixedVersion,.Severity,.Title] | @tsv' /tmp/trivy.json
+      - name: Self-clean diagnostic workflow
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/temp-image-vuln-diagnostic.yml
+          git commit -m "chore: remove k6 vulnerability diagnostic"
+          git push origin HEAD
