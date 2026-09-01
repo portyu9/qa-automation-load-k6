@@ -69,7 +69,8 @@ def main() -> int:
 
     required_override_tokens = (
         "COPY docker/security-overrides/go.mod /tmp/k6-security-overrides.mod",
-        'go get "golang.org/x/crypto@${X_CRYPTO_VERSION}"',
+        'GOFLAGS=-mod=mod go get "golang.org/x/crypto@${X_CRYPTO_VERSION}"',
+        "go mod vendor",
     )
     for token in required_override_tokens:
         if token not in text:
@@ -84,7 +85,7 @@ def main() -> int:
     print(
         "runtime provenance contract: "
         f"k6={version_match.group(1)} commit={commit_match.group(1)} stages={len(from_refs)} "
-        f"x-crypto-override={x_crypto_match.group(1)} immutable"
+        f"x-crypto-override={x_crypto_match.group(1)} vendor-sync=required immutable"
     )
     return 0
 
