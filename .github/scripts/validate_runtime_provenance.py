@@ -6,9 +6,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 DOCKERFILE = ROOT / "docker" / "Dockerfile"
+SECURITY_OVERRIDE_MOD = ROOT / "docker" / "security-overrides" / "go.mod"
 SHA256_RE = re.compile(r"@sha256:[0-9a-f]{64}$")
 K6_VERSION_RE = re.compile(r"^ARG K6_VERSION=([0-9]+\.[0-9]+\.[0-9]+)$", re.MULTILINE)
 K6_COMMIT_RE = re.compile(r"^ARG K6_COMMIT=([0-9a-f]{40})$", re.MULTILINE)
+X_CRYPTO_RE = re.compile(r"(?:^require\s+golang\.org/x/crypto\s+|^\s*golang\.org/x/crypto\s+)(v\d+\.\d+\.\d+)\s*$", re.MULTILINE)
 
 
 def main() -> int:
@@ -56,6 +58,23 @@ def main() -> int:
     if runtime is None or not re.match(r"^alpine:\d+\.\d+\.\d+@sha256:", runtime):
         errors.append("Dockerfile runtime must use a patch-versioned digest-pinned Alpine image")
 
+    if not SECURITY_OVERRIDE_MOD.is_file():
+        errors.append("docker/security-overrides/go.mod must track emergency Go-module security overrides")
+        x_crypto_match = None
+    else:
+        override_text = SECURITY_OVERRIDE_MOD.read_text(encoding="utf-8")
+        x_crypto_match = X_CRYPTO_RE.search(override_text)
+        if not x_crypto_match:
+            errors.append("security override module must pin golang.org/x/crypto to an exact semantic version")
+
+    required_override_tokens = (
+        "COPY docker/security-overrides/go.mod /tmp/k6-security-overrides.mod",
+        'go get "golang.org/x/crypto@${X_CRYPTO_VERSION}"',
+    )
+    for token in required_override_tokens:
+        if token not in text:
+            errors.append(f"Dockerfile must consume tracked Go security override: {token}")
+
     if errors:
         print("runtime provenance contract failed:")
         for error in errors:
@@ -64,7 +83,8 @@ def main() -> int:
 
     print(
         "runtime provenance contract: "
-        f"k6={version_match.group(1)} commit={commit_match.group(1)} stages={len(from_refs)} immutable"
+        f"k6={version_match.group(1)} commit={commit_match.group(1)} stages={len(from_refs)} "
+        f"x-crypto-override={x_crypto_match.group(1)} immutable"
     )
     return 0
 
