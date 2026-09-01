@@ -52,7 +52,7 @@ This contract prevents raw control characters, whitespace, oversized values, or 
 
 CI derives the expected version from the release-marker `FROM` reference and verifies that the rebuilt image reports the same version. This makes a Dependabot marker update a review signal: it cannot become a green runtime update until the source version/commit are intentionally synchronized. Built-image Trivy then evaluates the produced runtime, covering both final OS packages and vulnerabilities compiled into the Go binary.
 
-The source rebuild is intentional for k6 2.2.0 because its official image was compiled with a Go toolchain containing fixed HIGH vulnerabilities; updating only Alpine packages would leave those findings in the binary. The project image remains non-root and deliberately non-traffic-generating by default: starting it without an explicit scenario command runs `k6 version`. Traffic therefore requires an explicit `run ...` command plus a valid `K6_BASE_URL`; sustained traffic still requires the additional opt-in and exact-host allowlist.
+The source rebuild is intentional for k6 because its official image was compiled with a Go toolchain containing fixed HIGH vulnerabilities; updating only Alpine packages would leave those findings in the binary. The project image remains non-root and deliberately non-traffic-generating by default: starting it without an explicit scenario command runs `k6 version`. Traffic therefore requires an explicit `run ...` command plus a valid `K6_BASE_URL`; sustained traffic still requires the additional opt-in and exact-host allowlist.
 
 ## Deterministic smoke strategy
 
