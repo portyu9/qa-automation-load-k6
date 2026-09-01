@@ -165,3 +165,55 @@ jobs:
       - name: Confirm independent fallback gates
         if: steps.dependency-graph.outputs.available != 'true'
         run: echo 'Dependency Review service unavailable; repository and built-image Trivy jobs remain required independent gates.'
+
+  security-gate:
+    name: security-gate
+    if: always()
+    needs: [codeql, trivy-repository, container-image, dependency-review]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require applicable security domains
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          REPOSITORY: ${{ github.repository }}
+          CODEQL_RESULT: ${{ needs.codeql.result }}
+          REPOSITORY_TRIVY_RESULT: ${{ needs.trivy-repository.result }}
+          IMAGE_TRIVY_RESULT: ${{ needs.container-image.result }}
+          DEPENDENCY_REVIEW_RESULT: ${{ needs.dependency-review.result }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$REPOSITORY_TRIVY_RESULT" != "success" || "$IMAGE_TRIVY_RESULT" != "success" ]]; then
+            echo "repository_trivy=$REPOSITORY_TRIVY_RESULT image_trivy=$IMAGE_TRIVY_RESULT" >&2
+            exit 1
+          fi
+
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            if [[ "$DEPENDENCY_REVIEW_RESULT" != "success" ]]; then
+              echo "dependency_review=$DEPENDENCY_REVIEW_RESULT" >&2
+              exit 1
+            fi
+            if [[ "$HEAD_REPOSITORY" == "$REPOSITORY" ]]; then
+              if [[ "$CODEQL_RESULT" != "success" ]]; then
+                echo "internal PR requires CodeQL success; codeql=$CODEQL_RESULT" >&2
+                exit 1
+              fi
+            elif [[ "$CODEQL_RESULT" != "skipped" ]]; then
+              echo "fork PR should skip CodeQL because security-events write is unavailable; codeql=$CODEQL_RESULT" >&2
+              exit 1
+            fi
+          else
+            if [[ "$CODEQL_RESULT" != "success" ]]; then
+              echo "non-PR security run requires CodeQL success; codeql=$CODEQL_RESULT" >&2
+              exit 1
+            fi
+            if [[ "$DEPENDENCY_REVIEW_RESULT" != "skipped" ]]; then
+              echo "non-PR dependency review should be skipped; dependency_review=$DEPENDENCY_REVIEW_RESULT" >&2
+              exit 1
+            fi
+          fi
+
+          echo "Applicable CodeQL, Trivy, and Dependency Review domains passed."
