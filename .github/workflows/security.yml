@@ -140,12 +140,14 @@ jobs:
           vulnerabilities=$(jq '[.Results[]? | .Vulnerabilities[]?] | length' "$report")
           k6_version=$(awk -F= '$1 == "ARG K6_VERSION" { print $2; exit }' docker/Dockerfile)
           go_version=$(sed -nE 's/^FROM --platform=\$BUILDPLATFORM golang:([0-9]+\.[0-9]+\.[0-9]+)-alpine.*$/\1/p' docker/Dockerfile | head -n1)
+          x_crypto_version=$(awk '$1 == "require" && $2 == "golang.org/x/crypto" { print $3 } $1 == "golang.org/x/crypto" { print $2 }' docker/security-overrides/go.mod)
           {
             echo '### Built k6 image vulnerability gate'
             echo
             echo "- Alpine runtime packages: \`${alpine_packages}\`"
             echo "- Go binary packages: \`${go_packages}\`"
-            echo "- Proven k6 module: \`go.k6.io/k6/v2 v${k6_version}\`"
+            echo "- Upstream k6 source: exact tagged module \`v${k6_version}\`; scanned binary correctly records \`v${k6_version}+dirty\` because a governed dependency security override is applied before compilation."
+            echo "- Proven security override: \`golang.org/x/crypto ${x_crypto_version}\`"
             echo "- Proven Go stdlib: \`v${go_version}\`"
             echo "- Fixed HIGH/CRITICAL findings: \`${vulnerabilities}\`"
             echo '- Scanner: Trivy v0.74.0 image mode with full package inventory retained.'
