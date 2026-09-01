@@ -16,8 +16,21 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  supply-chain-policy:
+    name: Supply-chain policy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Validate immutable workflow and runtime provenance
+        run: |
+          python3 .github/scripts/validate_workflow_pins.py
+          python3 .github/scripts/validate_runtime_provenance.py
+
   codeql:
     name: CodeQL
+    needs: supply-chain-policy
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     permissions:
       actions: read
@@ -37,7 +50,8 @@ jobs:
         uses: github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
 
   trivy-repository:
-    name: Trivy repository
+    name: Trivy repository policy
+    needs: supply-chain-policy
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -45,30 +59,25 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Prepare evidence directory
         run: mkdir -p reports/security
-      - name: Scan dependencies, configuration, and repository secrets
+      - name: Scan repository configuration and committed secrets
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           version: v0.74.0
           scan-type: fs
           scan-ref: .
-          scanners: vuln,misconfig,secret
+          scanners: misconfig,secret
           severity: HIGH,CRITICAL
-          ignore-unfixed: true
           format: json
           output: reports/security/trivy.json
           exit-code: "1"
-      - name: Publish repository security summary
+      - name: Require attributed repository security evidence
         if: always()
         shell: bash
         run: |
           set -euo pipefail
           report="reports/security/trivy.json"
           summary="reports/security/summary.md"
-          if [[ ! -s "$report" ]]; then
-            printf '### Repository security gate\n\nTrivy did not produce a report. Inspect the scan step for setup/runtime failure.\n' | tee "$summary" >> "$GITHUB_STEP_SUMMARY"
-            exit 1
-          fi
-          vulnerabilities=$(jq '[.Results[]? | .Vulnerabilities[]?] | length' "$report")
+          python3 .github/scripts/validate_security_evidence.py repository "$report"
           misconfigurations=$(jq '[.Results[]? | .Misconfigurations[]?] | length' "$report")
           secrets=$(jq '[.Results[]? | .Secrets[]?] | length' "$report")
           {
@@ -76,12 +85,13 @@ jobs:
             echo
             echo '| Signal | Findings |'
             echo '| --- | ---: |'
-            echo "| Fixed HIGH/CRITICAL vulnerabilities | ${vulnerabilities} |"
             echo "| HIGH/CRITICAL misconfigurations | ${misconfigurations} |"
             echo "| Gated secret findings | ${secrets} |"
             echo
             echo '- Scanner: Trivy v0.74.0'
-            echo '- Scope: repository filesystem, supported configuration, dependency metadata, and committed secret material'
+            echo '- Scope: repository configuration and committed secret material.'
+            echo '- Evidence must contain an attributed `docker/Dockerfile` configuration result.'
+            echo '- Runtime dependency vulnerability coverage belongs to the separately built image scan.'
           } | tee "$summary" >> "$GITHUB_STEP_SUMMARY"
       - name: Upload repository security evidence
         if: always()
@@ -94,13 +104,14 @@ jobs:
 
   container-image:
     name: Trivy k6 image
+    needs: supply-chain-policy
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Prepare evidence directory
-        run: mkdir -p reports/security
+        run: mkdir -p reports/security/image
       - name: Build tracked k6 image
         run: docker build -f docker/Dockerfile -t qa-k6:security .
       - name: Scan built k6 image
@@ -112,20 +123,45 @@ jobs:
           scanners: vuln
           severity: HIGH,CRITICAL
           ignore-unfixed: true
+          list-all-pkgs: true
           format: json
-          output: reports/security/container-image.json
+          output: reports/security/image/container-image.json
           exit-code: "1"
+      - name: Require attributed built-image security evidence
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          report="reports/security/image/container-image.json"
+          summary="reports/security/image/summary.md"
+          python3 .github/scripts/validate_security_evidence.py image "$report"
+          alpine_packages=$(jq '[.Results[]? | select(.Class == "os-pkgs" and .Type == "alpine") | .Packages[]?] | length' "$report")
+          go_packages=$(jq '[.Results[]? | select(.Target == "usr/bin/k6" and .Class == "lang-pkgs" and .Type == "gobinary") | .Packages[]?] | length' "$report")
+          vulnerabilities=$(jq '[.Results[]? | .Vulnerabilities[]?] | length' "$report")
+          k6_version=$(awk -F= '$1 == "ARG K6_VERSION" { print $2; exit }' docker/Dockerfile)
+          go_version=$(sed -nE 's/^FROM --platform=\$BUILDPLATFORM golang:([0-9]+\.[0-9]+\.[0-9]+)-alpine.*$/\1/p' docker/Dockerfile | head -n1)
+          {
+            echo '### Built k6 image vulnerability gate'
+            echo
+            echo "- Alpine runtime packages: \`${alpine_packages}\`"
+            echo "- Go binary packages: \`${go_packages}\`"
+            echo "- Proven k6 module: \`go.k6.io/k6/v2 v${k6_version}\`"
+            echo "- Proven Go stdlib: \`v${go_version}\`"
+            echo "- Fixed HIGH/CRITICAL findings: \`${vulnerabilities}\`"
+            echo '- Scanner: Trivy v0.74.0 image mode with full package inventory retained.'
+          } | tee "$summary" >> "$GITHUB_STEP_SUMMARY"
       - name: Upload container security evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: trivy-container-evidence-${{ github.run_id }}
-          path: reports/security/container-image.json
+          path: reports/security/image/
           if-no-files-found: error
           retention-days: 14
 
   dependency-review:
     name: dependency-review
+    needs: supply-chain-policy
     if: github.event_name == 'pull_request'
     permissions:
       contents: read
@@ -149,12 +185,12 @@ jobs:
             echo 'GitHub Dependency graph is available; running change-aware Dependency Review.'
           else
             echo 'available=false' >> "$GITHUB_OUTPUT"
-            echo '::warning::GitHub Dependency graph is unavailable; repository and built-image Trivy remain independent gates, but change-aware Dependency Review cannot run.'
+            echo '::warning::GitHub Dependency graph is unavailable; repository configuration/secret policy and attributed built-image vulnerability scanning remain independent gates, but change-aware Dependency Review cannot run.'
             {
               echo '### Dependency Review fallback'
               echo
               echo 'GitHub Dependency graph is unavailable for this repository, so pull-request dependency-diff analysis cannot run.'
-              echo 'Independent repository and built-image Trivy jobs remain required.'
+              echo 'Independent repository configuration/secret policy and attributed built-image vulnerability scanning remain required.'
             } >> "$GITHUB_STEP_SUMMARY"
           fi
       - name: Review dependency changes
@@ -164,12 +200,12 @@ jobs:
           fail-on-severity: high
       - name: Confirm independent fallback gates
         if: steps.dependency-graph.outputs.available != 'true'
-        run: echo 'Dependency Review service unavailable; repository and built-image Trivy jobs remain required independent gates.'
+        run: echo 'Dependency Review service unavailable; repository policy and attributed built-image vulnerability gates remain required.'
 
   security-gate:
     name: security-gate
     if: always()
-    needs: [codeql, trivy-repository, container-image, dependency-review]
+    needs: [supply-chain-policy, codeql, trivy-repository, container-image, dependency-review]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -179,6 +215,7 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
           REPOSITORY: ${{ github.repository }}
+          SUPPLY_CHAIN_RESULT: ${{ needs.supply-chain-policy.result }}
           CODEQL_RESULT: ${{ needs.codeql.result }}
           REPOSITORY_TRIVY_RESULT: ${{ needs.trivy-repository.result }}
           IMAGE_TRIVY_RESULT: ${{ needs.container-image.result }}
@@ -186,6 +223,10 @@ jobs:
         run: |
           set -euo pipefail
 
+          if [[ "$SUPPLY_CHAIN_RESULT" != "success" ]]; then
+            echo "supply_chain_policy=$SUPPLY_CHAIN_RESULT" >&2
+            exit 1
+          fi
           if [[ "$REPOSITORY_TRIVY_RESULT" != "success" || "$IMAGE_TRIVY_RESULT" != "success" ]]; then
             echo "repository_trivy=$REPOSITORY_TRIVY_RESULT image_trivy=$IMAGE_TRIVY_RESULT" >&2
             exit 1
@@ -216,4 +257,4 @@ jobs:
             fi
           fi
 
-          echo "Applicable CodeQL, Trivy, and Dependency Review domains passed."
+          echo "Supply-chain policy, applicable CodeQL, repository policy, built-image vulnerability evidence, and Dependency Review domains passed."
