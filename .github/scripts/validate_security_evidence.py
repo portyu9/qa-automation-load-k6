@@ -11,6 +11,7 @@ DOCKERFILE = ROOT / "docker" / "Dockerfile"
 SECURITY_OVERRIDE_MOD = ROOT / "docker" / "security-overrides" / "go.mod"
 TRIVY_VERSION = "0.74.0"
 REQUIRE_RE = re.compile(r"^require\s+([^\s]+)\s+(v\d+\.\d+\.\d+)\s*$")
+BLOCK_REQUIRE_RE = re.compile(r"^([^\s]+)\s+(v\d+\.\d+\.\d+)\s*$")
 EXPECTED_SECURITY_OVERRIDES = {"golang.org/x/crypto", "google.golang.org/grpc"}
 
 
@@ -75,11 +76,22 @@ def security_override_versions() -> dict[str, str]:
     if not SECURITY_OVERRIDE_MOD.is_file():
         raise ValueError("tracked Go security override module is missing")
     versions: dict[str, str] = {}
+    in_require_block = False
     for raw in SECURITY_OVERRIDE_MOD.read_text(encoding="utf-8").splitlines():
         line = raw.strip()
         if not line or line.startswith("//") or line.startswith("module ") or line.startswith("go "):
             continue
-        match = REQUIRE_RE.fullmatch(line)
+        if line == "require (":
+            if in_require_block:
+                raise ValueError("nested security override require block")
+            in_require_block = True
+            continue
+        if line == ")":
+            if not in_require_block:
+                raise ValueError("unexpected security override require-block terminator")
+            in_require_block = False
+            continue
+        match = BLOCK_REQUIRE_RE.fullmatch(line) if in_require_block else REQUIRE_RE.fullmatch(line)
         if not match:
             raise ValueError(f"unexpected security override module content: {line}")
         name, version = match.groups()
@@ -88,6 +100,8 @@ def security_override_versions() -> dict[str, str]:
         if name in versions:
             raise ValueError(f"duplicate compiled security override dependency: {name}")
         versions[name] = version
+    if in_require_block:
+        raise ValueError("unterminated security override require block")
     if set(versions) != EXPECTED_SECURITY_OVERRIDES:
         missing = sorted(EXPECTED_SECURITY_OVERRIDES - set(versions))
         extra = sorted(set(versions) - EXPECTED_SECURITY_OVERRIDES)
@@ -144,11 +158,6 @@ def validate_image(report: dict) -> None:
         raise ValueError(f"built-image Go package inventory is unexpectedly small: {len(go_packages)}")
 
     packages = package_map(go_results[0])
-    # The upstream source tag/commit remains exact, but applying governed
-    # dependency overrides deliberately dirties that checkout. Requiring +dirty
-    # prevents the evidence layer from pretending the binary is pristine while
-    # the separate provenance validator still binds it to the exact upstream
-    # tag/commit and tracked override inputs.
     require_package(packages, "go.k6.io/k6/v2", f"v{k6_version}+dirty")
     require_package(packages, "stdlib", f"v{go_version}")
     for name, version in sorted(overrides.items()):
