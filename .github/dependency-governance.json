@@ -1,0 +1,93 @@
+{
+  "schemaVersion": 1,
+  "botLogin": "dependabot[bot]",
+  "botUserId": 49699333,
+  "botAuthorEmail": "49699333+dependabot[bot]@users.noreply.github.com",
+  "trustedCommitterLogin": "web-flow",
+  "gitCommitterName": "GitHub",
+  "gitCommitterEmail": "noreply@github.com",
+  "signedOffBy": "Signed-off-by: dependabot[bot] <support@github.com>",
+  "baseBranch": "main",
+  "mergeMethod": "rebase",
+  "automergeEnabled": true,
+  "statusCommentMarker": "<!-- dependency-governance:v1 -->",
+  "maxChangedFiles": 25,
+  "maxPullRequestAgeDays": 14,
+  "maxPaginationPages": 10,
+  "manualReviewLabels": [
+    "manual-review",
+    "do-not-merge"
+  ],
+  "requiredWorkflows": [
+    {
+      "workflow": "ci",
+      "gate": "ci-gate",
+      "file": "ci.yml"
+    },
+    {
+      "workflow": "extended",
+      "gate": "extended-gate",
+      "file": "extended.yml"
+    },
+    {
+      "workflow": "security",
+      "gate": "security-gate",
+      "file": "security.yml"
+    },
+    {
+      "workflow": "docs",
+      "gate": "static-contracts",
+      "file": "docs.yml"
+    }
+  ],
+  "allowedActionUpdateTypes": [
+    "version-update:semver-patch",
+    "version-update:semver-minor",
+    "security-update:semver-patch",
+    "security-update:semver-minor"
+  ],
+  "allowedGoOverrideUpdateTypes": [
+    "version-update:semver-patch",
+    "security-update:semver-patch"
+  ],
+  "manualReviewPaths": [
+    ".github/workflows/security.yml",
+    ".github/workflows/dependency-governance.yml",
+    ".github/dependency-governance.json",
+    ".github/scripts/dependency_governance.py",
+    ".github/scripts/dependency_governance_selfcheck.py",
+    ".github/scripts/dependency_governance_lib/__init__.py",
+    ".github/scripts/dependency_governance_lib/qualification.py",
+    ".github/scripts/dependency_governance_lib/runner.py",
+    ".github/scripts/dependency_governance_lib/models.py",
+    ".github/scripts/dependency_governance_lib/github.py",
+    ".github/scripts/dependency_governance_lib/provenance.py",
+    ".github/scripts/dependency_governance_lib/semantics.py",
+    ".github/scripts/dependency_governance_lib/reconcile.py",
+    ".github/dependabot.yml"
+  ],
+  "ecosystems": {
+    "docker": {
+      "files": [
+        "docker/Dockerfile"
+      ],
+      "mode": "manual",
+      "reason": "docker/Dockerfile jointly defines the upstream k6 release marker, digest-pinned Go builder, digest-pinned Alpine runtime, exact k6 source commit, and tracked security-override consumption. Image updates can change runtime provenance or release/toolchain compatibility and therefore remain human-reviewed even when all qualification workflows pass."
+    },
+    "gomod-security-override": {
+      "files": [
+        "docker/security-overrides/go.mod",
+        "docker/security-overrides/go.sum"
+      ],
+      "dependency": "golang.org/x/crypto",
+      "module": "github.com/portyu9/qa-automation-load-k6/docker/security-overrides"
+    },
+    "github-actions": {
+      "workflowPrefix": ".github/workflows/",
+      "extensions": [
+        ".yml",
+        ".yaml"
+      ]
+    }
+  }
+}
