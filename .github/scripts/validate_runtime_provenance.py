@@ -11,19 +11,37 @@ SHA256_RE = re.compile(r"@sha256:[0-9a-f]{64}$")
 K6_VERSION_RE = re.compile(r"^ARG K6_VERSION=([0-9]+\.[0-9]+\.[0-9]+)$", re.MULTILINE)
 K6_COMMIT_RE = re.compile(r"^ARG K6_COMMIT=([0-9a-f]{40})$", re.MULTILINE)
 REQUIRE_RE = re.compile(r"^require\s+([^\s]+)\s+(v\d+\.\d+\.\d+)\s*$")
+BLOCK_REQUIRE_RE = re.compile(r"^([^\s]+)\s+(v\d+\.\d+\.\d+)\s*$")
 EXPECTED_OVERRIDES = {"golang.org/x/crypto", "google.golang.org/grpc"}
 
 
 def parse_overrides(text: str) -> dict[str, str] | None:
     versions: dict[str, str] = {}
+    in_require_block = False
+
     for raw in text.splitlines():
         line = raw.strip()
         if not line or line.startswith("//") or line.startswith("module ") or line.startswith("go "):
             continue
-        match = REQUIRE_RE.fullmatch(line)
+
+        if line == "require (":
+            if in_require_block:
+                return None
+            in_require_block = True
+            continue
+        if line == ")":
+            if not in_require_block:
+                return None
+            in_require_block = False
+            continue
+
+        match = BLOCK_REQUIRE_RE.fullmatch(line) if in_require_block else REQUIRE_RE.fullmatch(line)
         if not match or match.group(1) in versions:
             return None
         versions[match.group(1)] = match.group(2)
+
+    if in_require_block:
+        return None
     return versions if set(versions) == EXPECTED_OVERRIDES else None
 
 
