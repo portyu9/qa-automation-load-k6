@@ -1,0 +1,38 @@
+name: readme-second-pass-fix
+
+on:
+  push:
+    branches: [docs/readme-second-pass]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    if: github.actor != 'github-actions[bot]'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: docs/readme-second-pass
+      - name: Apply exact README wording correction
+        shell: python
+        run: |
+          from pathlib import Path
+          p = Path('README.md')
+          text = p.read_text(encoding='utf-8')
+          old = 'the tracked upstream k6 release image was compiled with dependencies that had fixed HIGH vulnerabilities'
+          new = 'the tracked upstream k6 release image was compiled with dependencies affected by HIGH-severity vulnerabilities with available fixes'
+          if text.count(old) != 1:
+              raise SystemExit(f'expected one exact k6 vulnerability sentence fragment, found {text.count(old)}')
+          p.write_text(text.replace(old, new), encoding='utf-8')
+      - name: Commit wording correction
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/readme-second-pass-fix.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add README.md .github/workflows/readme-second-pass-fix.yml
+          git commit -m 'docs: clarify k6 vulnerability wording'
+          git push origin HEAD:docs/readme-second-pass
