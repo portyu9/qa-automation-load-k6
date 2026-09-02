@@ -1,0 +1,59 @@
+name: readme-knowledge-audit-fix
+
+on:
+  push:
+    branches: [docs/readme-knowledge-audit]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    if: github.actor != 'github-actions[bot]'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: docs/readme-knowledge-audit
+      - name: Clarify binary and OS provenance boundaries
+        shell: python
+        run: |
+          from pathlib import Path
+
+          def replace_exact(path, old, new):
+              p = Path(path)
+              text = p.read_text(encoding='utf-8')
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{path}: expected one exact match, found {count}: {old[:100]!r}')
+              p.write_text(text.replace(old, new), encoding='utf-8')
+
+          old = '''`docker/Dockerfile` is the single tracked runtime/provenance source used by CI and extended profile contracts. It retains a digest-pinned official `grafana/k6:<version>` stage as the upstream release marker that Docker Dependabot can observe, but the executing `/usr/bin/k6` is rebuilt from the exact `K6_VERSION` tag and `K6_COMMIT` with a digest-pinned patched Go builder. The source checkout fails unless the fetched release tag resolves to the committed revision.
+
+The final Alpine stage is separately digest-pinned, updated during the build, and scanned as the actual produced image. This separation exists because the current official k6 image was compiled with a Go toolchain that had fixed HIGH vulnerabilities; merely upgrading its Alpine packages would not remediate vulnerabilities compiled into the k6 binary.'''
+          new = '''`docker/Dockerfile` is the single tracked runtime/provenance source used by CI and extended profile contracts. It retains a digest-pinned official `grafana/k6:<version>` stage as the upstream release marker that Docker Dependabot can observe, but the executing `/usr/bin/k6` is rebuilt from the exact `K6_VERSION` tag and `K6_COMMIT` with a digest-pinned Go builder. The source checkout fails unless the fetched release tag resolves to the committed revision.
+
+Compiled dependency remediation is explicit rather than implicit. `docker/security-overrides/go.mod` allowlists exactly `golang.org/x/crypto v0.55.0` and `google.golang.org/grpc v1.83.1`; the Docker build applies each override to the ephemeral upstream checkout, verifies Go's selected module version, re-vendors the graph, and only then compiles k6. Security evidence independently requires those exact module versions in the produced binary inventory, so the release tag remains attributable while the reviewed security delta is visible.
+
+The final Alpine **base identity** is digest-pinned, but its OS package set is intentionally security-refreshed with `apk upgrade --no-cache` during the build before the actual produced image is scanned. The repository therefore makes two different provenance claims: k6 source identity and compiled override selection are exact; Alpine package resolution is tied to the package repository state available at build time. The finished image is **not claimed to be bit-for-bit reproducible from the Git commit alone**. Built-image Trivy is the required attestation of the OS and Go-binary package state that actually shipped from that build.
+
+This separation exists because the tracked upstream k6 release image was compiled with dependencies that had fixed HIGH vulnerabilities; changing only Alpine packages cannot remediate vulnerabilities compiled into the k6 binary.'''
+          replace_exact('README.md', old, new)
+
+          validator = Path('.github/scripts/validate_readme.py')
+          text = validator.read_text(encoding='utf-8')
+          marker = '    text = README.read_text(encoding="utf-8")\n    validate_local_links(text, errors)'
+          insertion = '''    text = README.read_text(encoding="utf-8")\n    for provenance_claim in (\n        "golang.org/x/crypto v0.55.0",\n        "google.golang.org/grpc v1.83.1",\n        "apk upgrade --no-cache",\n        "not claimed to be bit-for-bit reproducible from the Git commit alone",\n    ):\n        if provenance_claim not in text:\n            fail(f"README must document the packaged-runtime provenance boundary: {provenance_claim}", errors)\n    validate_local_links(text, errors)'''
+          if text.count(marker) != 1:
+              raise SystemExit('README validator insertion marker did not match exactly once')
+          validator.write_text(text.replace(marker, insertion), encoding='utf-8')
+      - name: Commit branch-only documentation corrections
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/readme-knowledge-audit-fix.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add README.md .github/scripts/validate_readme.py .github/workflows/readme-knowledge-audit-fix.yml
+          git commit -m 'docs: clarify k6 runtime provenance boundaries'
+          git push origin HEAD:docs/readme-knowledge-audit
