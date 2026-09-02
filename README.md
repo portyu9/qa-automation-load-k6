@@ -249,7 +249,7 @@ Compiled dependency remediation is explicit rather than implicit. `docker/securi
 
 The final Alpine **base identity** is digest-pinned, but its OS package set is intentionally security-refreshed with `apk upgrade --no-cache` during the build before the actual produced image is scanned. The repository therefore makes two different provenance claims: k6 source identity and compiled override selection are exact; Alpine package resolution is tied to the package repository state available at build time. The finished image is **not claimed to be bit-for-bit reproducible from the Git commit alone**. Built-image Trivy is the required attestation of the OS and Go-binary package state that actually shipped from that build.
 
-This separation exists because the tracked upstream k6 release image was compiled with dependencies that had fixed HIGH vulnerabilities; changing only Alpine packages cannot remediate vulnerabilities compiled into the k6 binary.
+This separation exists because the tracked upstream k6 release image was compiled with dependencies affected by HIGH-severity vulnerabilities with available fixes; changing only Alpine packages cannot remediate vulnerabilities compiled into the k6 binary.
 
 Dependency automation is therefore a **release signal, not an automatic runtime switch**. CI derives the expected k6 version from the official release-marker `FROM` line and compares it with the rebuilt binary. If Dependabot changes the marker without the reviewed `K6_VERSION`/`K6_COMMIT` source pins being synchronized, the packaged-runtime gate fails. A runtime update must review the upstream release, synchronize source provenance, and pass guardrails, smoke, extended initialization, CodeQL, repository Trivy, and built-image Trivy.
 
