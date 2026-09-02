@@ -7,11 +7,17 @@ from .github import GitHubApi
 from .models import ACTION_LINE, GO_SUM_LINE, normalize_version, semver_tuple, unique
 from .provenance import validate_docker_manual, validate_manual_path_scope
 
-def parse_override_go_mod(text: str, config: dict[str, Any]) -> tuple[str, str, str] | None:
+
+def parse_override_go_mod(
+    text: str,
+    config: dict[str, Any],
+) -> tuple[str, str, dict[str, str]] | None:
     module = ""
     go_version = ""
-    dependency_version = ""
-    dependency = str(config["ecosystems"]["gomod-security-override"]["dependency"])
+    versions: dict[str, str] = {}
+    dependencies = {
+        str(value) for value in config["ecosystems"]["gomod-security-override"]["dependencies"]
+    }
     for raw in text.splitlines():
         line = raw.strip()
         if not line or line.startswith("//"):
@@ -26,15 +32,15 @@ def parse_override_go_mod(text: str, config: dict[str, Any]) -> tuple[str, str, 
             go_version = line.removeprefix("go ").strip()
         elif line.startswith("require "):
             parts = line.split()
-            if len(parts) != 3 or parts[1] != dependency or dependency_version:
+            if len(parts) != 3 or parts[1] not in dependencies or parts[1] in versions:
                 return None
-            dependency_version = parts[2]
+            versions[parts[1]] = parts[2]
         else:
             return None
     expected_module = str(config["ecosystems"]["gomod-security-override"]["module"])
-    if module != expected_module or not go_version or not dependency_version:
+    if module != expected_module or not go_version or set(versions) != dependencies:
         return None
-    return module, go_version, dependency_version
+    return module, go_version, versions
 
 
 def validate_go_override(
@@ -46,7 +52,8 @@ def validate_go_override(
     config: dict[str, Any],
 ) -> dict[str, Any]:
     reasons = validate_manual_path_scope(files, config)
-    allowed_files = set(config["ecosystems"]["gomod-security-override"]["files"])
+    policy = config["ecosystems"]["gomod-security-override"]
+    allowed_files = set(policy["files"])
     names = {str(file.get("filename", "")) for file in files}
     go_mod = "docker/security-overrides/go.mod"
     if go_mod not in names:
@@ -68,26 +75,53 @@ def validate_go_override(
     if base_model[:2] != head_model[:2]:
         reasons.append("module path and Go language version must remain unchanged")
 
-    old_version = semver_tuple(base_model[2])
-    new_version = semver_tuple(head_model[2])
-    if not old_version or not new_version:
-        reasons.append("Go security override versions must be strict semantic versions")
-    elif not (
-        new_version[0] == old_version[0]
-        and new_version[1] == old_version[1]
-        and new_version[2] > old_version[2]
-    ):
-        reasons.append("Go security override autonomous updates are patch-only within the same minor line")
+    dependencies = [str(value) for value in policy["dependencies"]]
+    changes: list[dict[str, str]] = []
+    for dependency in dependencies:
+        old_text = base_model[2][dependency]
+        new_text = head_model[2][dependency]
+        if old_text == new_text:
+            continue
+        old_version = semver_tuple(old_text)
+        new_version = semver_tuple(new_text)
+        if not old_version or not new_version:
+            reasons.append(f"{dependency} override versions must be strict semantic versions")
+        elif not (
+            new_version[0] == old_version[0]
+            and new_version[1] == old_version[1]
+            and new_version[2] > old_version[2]
+        ):
+            reasons.append(
+                f"{dependency} autonomous security override updates are patch-only within the same minor line"
+            )
+        changes.append({"dependency": dependency, "from": old_text, "to": new_text})
 
-    dependency = str(config["ecosystems"]["gomod-security-override"]["dependency"])
-    if len(metadata) != 1 or metadata[0].get("name") != dependency:
-        reasons.append(f"signed metadata must describe exactly one {dependency} update")
-    else:
-        item = metadata[0]
+    if not changes:
+        reasons.append("Go security override PR does not change an allowlisted dependency version")
+
+    metadata_by_name: dict[str, dict[str, str]] = {}
+    for item in metadata:
+        name = str(item.get("name") or "")
+        if not name or name in metadata_by_name:
+            reasons.append("signed Go override metadata contains missing or duplicate dependency names")
+            continue
+        metadata_by_name[name] = item
+    changed_dependencies = {change["dependency"] for change in changes}
+    if set(metadata_by_name) != changed_dependencies:
+        reasons.append("signed Go override metadata does not exactly match changed dependencies")
+    for change in changes:
+        dependency = change["dependency"]
+        item = metadata_by_name.get(dependency)
+        if not item:
+            continue
+        if item.get("dependencyType") != "direct:production":
+            reasons.append(f"{dependency} signed dependency type must be direct:production")
         if item.get("updateType") not in config["allowedGoOverrideUpdateTypes"]:
-            reasons.append(f"Go override update type {item.get('updateType') or 'unknown'} is not autonomous")
-        if normalize_version(item.get("version", "")) != normalize_version(head_model[2]):
-            reasons.append("signed Go override dependency-version does not match head go.mod")
+            reasons.append(
+                f"{dependency} Go override update type {item.get('updateType') or 'unknown'} is not autonomous"
+            )
+        if normalize_version(item.get("version", "")) != normalize_version(change["to"]):
+            reasons.append(f"{dependency} signed dependency-version does not match head go.mod")
 
     go_sum = "docker/security-overrides/go.sum"
     if go_sum in names:
@@ -95,19 +129,18 @@ def validate_go_override(
         if head_sum is None:
             reasons.append("changed go.sum is missing at head")
         else:
-            bad_lines = [line for line in head_sum.splitlines() if line.strip() and not GO_SUM_LINE.fullmatch(line.strip())]
+            bad_lines = [
+                line
+                for line in head_sum.splitlines()
+                if line.strip() and not GO_SUM_LINE.fullmatch(line.strip())
+            ]
             if bad_lines:
                 reasons.append("go.sum contains non-checksum content")
             lines = [line.strip() for line in head_sum.splitlines() if line.strip()]
             if len(lines) != len(set(lines)):
                 reasons.append("go.sum contains duplicate checksum lines")
 
-    change = {
-        "dependency": dependency,
-        "from": base_model[2],
-        "to": head_model[2],
-    }
-    return {"eligible": not reasons, "reasons": unique(reasons), "changes": [change]}
+    return {"eligible": not reasons, "reasons": unique(reasons), "changes": changes}
 
 
 def action_diff_pairs(patch: str) -> tuple[list[tuple[re.Match[str], re.Match[str]]], list[str]]:
@@ -230,4 +263,3 @@ def validate_semantics(
         "reasons": ["changed-file scope does not match an autonomously governed dependency ecosystem"],
         "changes": [],
     }
-

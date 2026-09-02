@@ -79,14 +79,28 @@ def action_patch(version: str = '7.0.1', extra: str = '') -> str:
     )
 
 
-def go_model(version: str = '0.55.0') -> str:
-    return f'module github.com/{REPO}/docker/security-overrides\n\ngo 1.26.0\n\nrequire golang.org/x/crypto v{version}\n'
+def go_model(x_crypto: str = '0.55.0', grpc: str = '1.83.0') -> str:
+    return (
+        f'module github.com/{REPO}/docker/security-overrides\n\n'
+        'go 1.26.0\n\n'
+        f'require golang.org/x/crypto v{x_crypto}\n'
+        f'require google.golang.org/grpc v{grpc}\n'
+    )
+
+
+def go_metadata(*items: tuple[str, str, str]) -> list[dict[str, str]]:
+    return [
+        {'name': name, 'version': version, 'dependencyType': 'direct:production', 'updateType': update}
+        for name, version, update in items
+    ]
 
 
 def check_config() -> None:
     assert gov.validate_config(CONFIG) == []
     broken = deepcopy(CONFIG); broken['allowedGoOverrideUpdateTypes'].append('version-update:semver-minor')
     assert any('patch-only' in reason for reason in gov.validate_config(broken))
+    broken = deepcopy(CONFIG); broken['ecosystems']['gomod-security-override']['dependencies'].append('golang.org/x/crypto')
+    assert any('unique' in reason for reason in gov.validate_config(broken))
 
 
 def check_parsers() -> None:
@@ -128,18 +142,39 @@ def check_spoofing() -> None:
 
 def check_go_patch() -> None:
     path='docker/security-overrides/go.mod'
-    api=FakeApi({(path,BASE):go_model(), (path,HEAD):go_model('0.55.1')})
-    result=gov.validate_go_override(api,BASE,HEAD,[{'filename':path}], [{'name':'golang.org/x/crypto','version':'0.55.1','updateType':'version-update:semver-patch'}], CONFIG)
+    api=FakeApi({(path,BASE):go_model(), (path,HEAD):go_model(x_crypto='0.55.1')})
+    result=gov.validate_go_override(
+        api,BASE,HEAD,[{'filename':path}],
+        go_metadata(('golang.org/x/crypto','0.55.1','version-update:semver-patch')),CONFIG)
     assert result['eligible'], result['reasons']
+
+
+def check_grpc_security_patch() -> None:
+    path='docker/security-overrides/go.mod'
+    api=FakeApi({(path,BASE):go_model(), (path,HEAD):go_model(grpc='1.83.1')})
+    result=gov.validate_go_override(
+        api,BASE,HEAD,[{'filename':path}],
+        go_metadata(('google.golang.org/grpc','1.83.1','security-update:semver-patch')),CONFIG)
+    assert result['eligible'], result['reasons']
+    assert result['changes'] == [{'dependency':'google.golang.org/grpc','from':'v1.83.0','to':'v1.83.1'}]
 
 
 def check_go_refusal() -> None:
     path='docker/security-overrides/go.mod'
-    api=FakeApi({(path,BASE):go_model(), (path,HEAD):go_model('0.56.0')})
-    result=gov.validate_go_override(api,BASE,HEAD,[{'filename':path}], [{'name':'golang.org/x/crypto','version':'0.56.0','updateType':'version-update:semver-minor'}], CONFIG)
+    api=FakeApi({(path,BASE):go_model(), (path,HEAD):go_model(x_crypto='0.56.0')})
+    result=gov.validate_go_override(
+        api,BASE,HEAD,[{'filename':path}],
+        go_metadata(('golang.org/x/crypto','0.56.0','version-update:semver-minor')),CONFIG)
     assert not result['eligible']
-    api.files[(path,HEAD)] = go_model('0.55.1') + 'replace example.invalid/a => example.invalid/b v1.0.0\n'
-    result=gov.validate_go_override(api,BASE,HEAD,[{'filename':path}], [{'name':'golang.org/x/crypto','version':'0.55.1','updateType':'version-update:semver-patch'}], CONFIG)
+    api.files[(path,HEAD)] = go_model(x_crypto='0.55.1') + 'replace example.invalid/a => example.invalid/b v1.0.0\n'
+    result=gov.validate_go_override(
+        api,BASE,HEAD,[{'filename':path}],
+        go_metadata(('golang.org/x/crypto','0.55.1','version-update:semver-patch')),CONFIG)
+    assert not result['eligible']
+    api.files[(path,HEAD)] = go_model(grpc='1.83.1')
+    result=gov.validate_go_override(
+        api,BASE,HEAD,[{'filename':path}],
+        go_metadata(('golang.org/x/crypto','0.55.1','version-update:semver-patch')),CONFIG)
     assert not result['eligible']
 
 
@@ -182,6 +217,7 @@ def check_qualification() -> None:
     result = validate_qualification(Api(), p, BASE, CONFIG)
     assert result['eligible'], result['reasons']
 
+
 def check_targets() -> None:
     api=FakeApi(pulls=[{'number':1,'user':{'login':'dependabot[bot]'}},{'number':2,'user':{'login':'human'}},{'number':3,'user':{'login':'dependabot[bot]'}}])
     assert gov.target_pull_requests(api,'schedule',{},CONFIG) == [1,3]
@@ -200,7 +236,12 @@ def check_workflow_boundary() -> None:
     assert "- '.github/scripts/dependency_governance_lib/**'" in WORKFLOW
 
 
-CHECKS=[check_config,check_parsers,check_metadata,check_classification,check_provenance,check_spoofing,check_go_patch,check_go_refusal,check_action_patch,check_action_refusal,check_run_identity,check_qualification,check_targets,check_workflow_boundary]
+CHECKS=[
+    check_config,check_parsers,check_metadata,check_classification,check_provenance,
+    check_spoofing,check_go_patch,check_grpc_security_patch,check_go_refusal,
+    check_action_patch,check_action_refusal,check_run_identity,check_qualification,
+    check_targets,check_workflow_boundary,
+]
 if __name__ == '__main__':
     for check in CHECKS: check()
     print(f'dependency governance self-check: {len(CHECKS)} checks passed')

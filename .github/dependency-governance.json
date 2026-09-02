@@ -19,26 +19,10 @@
     "do-not-merge"
   ],
   "requiredWorkflows": [
-    {
-      "workflow": "ci",
-      "gate": "ci-gate",
-      "file": "ci.yml"
-    },
-    {
-      "workflow": "extended",
-      "gate": "extended-gate",
-      "file": "extended.yml"
-    },
-    {
-      "workflow": "security",
-      "gate": "security-gate",
-      "file": "security.yml"
-    },
-    {
-      "workflow": "docs",
-      "gate": "static-contracts",
-      "file": "docs.yml"
-    }
+    {"workflow": "ci", "gate": "ci-gate", "file": "ci.yml"},
+    {"workflow": "extended", "gate": "extended-gate", "file": "extended.yml"},
+    {"workflow": "security", "gate": "security-gate", "file": "security.yml"},
+    {"workflow": "docs", "gate": "static-contracts", "file": "docs.yml"}
   ],
   "allowedActionUpdateTypes": [
     "version-update:semver-patch",
@@ -68,9 +52,7 @@
   ],
   "ecosystems": {
     "docker": {
-      "files": [
-        "docker/Dockerfile"
-      ],
+      "files": ["docker/Dockerfile"],
       "mode": "manual",
       "reason": "docker/Dockerfile jointly defines the upstream k6 release marker, digest-pinned Go builder, digest-pinned Alpine runtime, exact k6 source commit, and tracked security-override consumption. Image updates can change runtime provenance or release/toolchain compatibility and therefore remain human-reviewed even when all qualification workflows pass."
     },
@@ -79,15 +61,15 @@
         "docker/security-overrides/go.mod",
         "docker/security-overrides/go.sum"
       ],
-      "dependency": "golang.org/x/crypto",
+      "dependencies": [
+        "golang.org/x/crypto",
+        "google.golang.org/grpc"
+      ],
       "module": "github.com/portyu9/qa-automation-load-k6/docker/security-overrides"
     },
     "github-actions": {
       "workflowPrefix": ".github/workflows/",
-      "extensions": [
-        ".yml",
-        ".yaml"
-      ]
+      "extensions": [".yml", ".yaml"]
     }
   }
 }

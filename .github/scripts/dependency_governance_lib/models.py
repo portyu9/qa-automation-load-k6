@@ -228,8 +228,14 @@ def validate_config(config: dict[str, Any]) -> list[str]:
         files = gomod.get("files")
         if not isinstance(files, list) or "docker/security-overrides/go.mod" not in files:
             errors.append("gomod-security-override must include its go.mod")
-        if not nonempty(gomod.get("dependency")):
-            errors.append("gomod-security-override dependency must be non-empty")
+        dependencies = gomod.get("dependencies")
+        if (
+            not isinstance(dependencies, list)
+            or not dependencies
+            or not all(nonempty(value) for value in dependencies)
+            or len(set(dependencies)) != len(dependencies)
+        ):
+            errors.append("gomod-security-override dependencies must be a unique non-empty string list")
         if not nonempty(gomod.get("module")):
             errors.append("gomod-security-override module must be non-empty")
 
@@ -244,4 +250,3 @@ def validate_config(config: dict[str, Any]) -> list[str]:
             errors.append("github-actions extensions must be .yml and .yaml")
 
     return unique(errors)
-
