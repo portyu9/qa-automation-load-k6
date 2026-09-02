@@ -25,7 +25,12 @@ RUN git init . \
 # the ephemeral upstream checkout, verified after Go's module selection, and
 # then vendored before compilation. The k6 release tag/commit remain unchanged.
 COPY docker/security-overrides/go.mod /tmp/k6-security-overrides.mod
-RUN awk '$1 == "require" && NF == 3 { print $2, $3 }' /tmp/k6-security-overrides.mod > /tmp/k6-security-overrides.txt \
+RUN awk ' \
+      $1 == "require" && NF == 3 { print $2, $3; next } \
+      $1 == "require" && $2 == "(" { in_require = 1; next } \
+      in_require && $1 == ")" { in_require = 0; next } \
+      in_require && NF == 2 { print $1, $2 } \
+    ' /tmp/k6-security-overrides.mod > /tmp/k6-security-overrides.txt \
     && test "$(wc -l < /tmp/k6-security-overrides.txt)" -eq 2 \
     && while read -r MODULE VERSION; do \
          case "${MODULE}" in \

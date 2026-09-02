@@ -140,8 +140,8 @@ jobs:
           vulnerabilities=$(jq '[.Results[]? | .Vulnerabilities[]?] | length' "$report")
           k6_version=$(awk -F= '$1 == "ARG K6_VERSION" { print $2; exit }' docker/Dockerfile)
           go_version=$(sed -nE 's/^FROM --platform=\$BUILDPLATFORM golang:([0-9]+\.[0-9]+\.[0-9]+)-alpine.*$/\1/p' docker/Dockerfile | head -n1)
-          x_crypto_version=$(awk '$1 == "require" && $2 == "golang.org/x/crypto" { print $3 }' docker/security-overrides/go.mod)
-          grpc_version=$(awk '$1 == "require" && $2 == "google.golang.org/grpc" { print $3 }' docker/security-overrides/go.mod)
+          x_crypto_version=$(awk '$1 == "require" && $2 == "golang.org/x/crypto" { print $3; exit } $1 == "golang.org/x/crypto" { print $2; exit }' docker/security-overrides/go.mod)
+          grpc_version=$(awk '$1 == "require" && $2 == "google.golang.org/grpc" { print $3; exit } $1 == "google.golang.org/grpc" { print $2; exit }' docker/security-overrides/go.mod)
           test -n "$x_crypto_version"
           test -n "$grpc_version"
           {
@@ -152,7 +152,7 @@ jobs:
             echo "- Upstream k6 source: exact tagged module \`v${k6_version}\`; scanned binary correctly records \`v${k6_version}+dirty\` because governed dependency security overrides are applied before compilation."
             echo "- Proven security overrides: \`golang.org/x/crypto ${x_crypto_version}\`, \`google.golang.org/grpc ${grpc_version}\`"
             echo "- Proven Go stdlib: \`v${go_version}\`"
-            echo "- Fixed HIGH/CRITICAL findings: \`${vulnerabilities}\`"
+            echo "- Fixable HIGH/CRITICAL findings: \`${vulnerabilities}\`"
             echo '- Scanner: Trivy v0.74.0 image mode with full package inventory retained.'
           } | tee "$summary" >> "$GITHUB_STEP_SUMMARY"
       - name: Upload container security evidence

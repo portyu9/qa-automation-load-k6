@@ -7,24 +7,49 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 DOCKERFILE = ROOT / "docker" / "Dockerfile"
 SECURITY_OVERRIDE_MOD = ROOT / "docker" / "security-overrides" / "go.mod"
+SECURITY_OVERRIDE_PINS = ROOT / "docker" / "security-overrides" / "pins.go"
 SHA256_RE = re.compile(r"@sha256:[0-9a-f]{64}$")
 K6_VERSION_RE = re.compile(r"^ARG K6_VERSION=([0-9]+\.[0-9]+\.[0-9]+)$", re.MULTILINE)
 K6_COMMIT_RE = re.compile(r"^ARG K6_COMMIT=([0-9a-f]{40})$", re.MULTILINE)
 REQUIRE_RE = re.compile(r"^require\s+([^\s]+)\s+(v\d+\.\d+\.\d+)\s*$")
+BLOCK_REQUIRE_RE = re.compile(r"^([^\s]+)\s+(v\d+\.\d+\.\d+)\s*$")
+PIN_IMPORT_RE = re.compile(r'^\s*_\s+"([^"]+)"\s*$')
 EXPECTED_OVERRIDES = {"golang.org/x/crypto", "google.golang.org/grpc"}
+EXPECTED_PIN_IMPORTS = {"golang.org/x/crypto/cryptobyte", "google.golang.org/grpc/codes"}
 
 
 def parse_overrides(text: str) -> dict[str, str] | None:
     versions: dict[str, str] = {}
+    in_require_block = False
+
     for raw in text.splitlines():
         line = raw.strip()
         if not line or line.startswith("//") or line.startswith("module ") or line.startswith("go "):
             continue
-        match = REQUIRE_RE.fullmatch(line)
+
+        if line == "require (":
+            if in_require_block:
+                return None
+            in_require_block = True
+            continue
+        if line == ")":
+            if not in_require_block:
+                return None
+            in_require_block = False
+            continue
+
+        match = BLOCK_REQUIRE_RE.fullmatch(line) if in_require_block else REQUIRE_RE.fullmatch(line)
         if not match or match.group(1) in versions:
             return None
         versions[match.group(1)] = match.group(2)
+
+    if in_require_block:
+        return None
     return versions if set(versions) == EXPECTED_OVERRIDES else None
+
+
+def parse_pin_imports(text: str) -> set[str]:
+    return {match.group(1) for line in text.splitlines() if (match := PIN_IMPORT_RE.fullmatch(line))}
 
 
 def main() -> int:
@@ -82,6 +107,13 @@ def main() -> int:
                 "security override module must contain exactly the allowlisted x/crypto and grpc semantic-version pins"
             )
 
+    if not SECURITY_OVERRIDE_PINS.is_file():
+        errors.append("docker/security-overrides/pins.go must anchor the allowlisted modules for Go maintenance tooling")
+    else:
+        pin_imports = parse_pin_imports(SECURITY_OVERRIDE_PINS.read_text(encoding="utf-8"))
+        if pin_imports != EXPECTED_PIN_IMPORTS:
+            errors.append("security override anchors must contain exactly the approved x/crypto and grpc package imports")
+
     required_override_tokens = (
         "COPY docker/security-overrides/go.mod /tmp/k6-security-overrides.mod",
         "test \"$(wc -l < /tmp/k6-security-overrides.txt)\" -eq 2",
@@ -104,7 +136,7 @@ def main() -> int:
     print(
         "runtime provenance contract: "
         f"k6={version_match.group(1)} commit={commit_match.group(1)} stages={len(from_refs)} "
-        f"overrides={override_summary} vendor-sync=required immutable"
+        f"overrides={override_summary} anchors=qualified vendor-sync=required immutable"
     )
     return 0
 
