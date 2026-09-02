@@ -33,7 +33,7 @@ A k6 performance quality-engineering framework for **smoke, load, stress, and so
 | Load | Can expected demand satisfy service objectives? | Explicit operator execution | k6 metrics + thresholds |
 | Stress | Where does controlled degradation begin? | Explicit operator execution | k6 metrics + failure shape |
 | Soak | Does stable demand expose cumulative degradation? | Explicit operator execution | Time-dependent metrics |
-| Security | Source, repository, and packaged-runtime exposure | No target traffic | CodeQL + repository/image Trivy + Dependency Review when available |
+| Security | Runtime/workflow provenance plus source, repository, and packaged-runtime exposure | No target traffic | Supply-chain policy + CodeQL + repository/image Trivy + Dependency Review when available |
 | Documentation | README/workflow/governance consistency | No target traffic | README + immutable workflow dependency contracts |
 
 ## Architecture
@@ -65,7 +65,8 @@ flowchart TD
     CHANGE --> DOCS[README + workflow + guardrail contracts]
     DOCS --> DG[Docs / static-contracts]
 
-    SAST[CodeQL] --> SG[Security / security-gate]
+    SUPPLY[Supply-chain provenance policy] --> SG[Security / security-gate]
+    SAST[CodeQL] --> SG
     REPO[Trivy repository scan] --> SG
     IMAGE[Trivy built-image scan] --> SG
     REVIEW[Dependency Review when available] --> SG
@@ -84,7 +85,7 @@ flowchart TD
     class BUILD,GUARD,BIZ,EXT,DOCS policy;
     class SAFE,FIX,SMOKE,L,ST,SO,RUN runtime;
     class SUMMARY,ZERO,RESULT evidence;
-    class CIG,EG,DG,SAST,REPO,IMAGE,REVIEW,SG gate;
+    class CIG,EG,DG,SUPPLY,SAST,REPO,IMAGE,REVIEW,SG gate;
     linkStyle default stroke:#57606a,stroke-width:1.4px;
 ```
 
