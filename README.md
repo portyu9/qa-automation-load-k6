@@ -40,13 +40,16 @@ A k6 performance quality-engineering framework for **smoke, load, stress, and so
 
 ```mermaid
 flowchart TD
-    CHANGE[Change] --> BUILD[Build tracked k6 image]
+    CHANGE[Repository change] --> BUILD[Build tracked k6 image]
     BUILD --> SAFE[Non-traffic image startup contract]
     CHANGE --> GUARD[Shell + runtime guardrails]
     GUARD --> FIX[Repository loopback API]
     FIX --> SMOKE[Low-volume smoke]
     SMOKE --> BIZ[Tagged business metrics]
     BIZ --> SUMMARY[Target class + structured summary]
+    SAFE --> CIG[CI / ci-gate]
+    SUMMARY --> CIG
+
     CHANGE --> EXT[Extended profile contracts]
     EXT --> L[k6 inspect · load]
     EXT --> ST[k6 inspect · stress]
@@ -54,17 +57,34 @@ flowchart TD
     L --> ZERO[Zero sustained traffic]
     ST --> ZERO
     SO --> ZERO
+    ZERO --> EG[Extended / extended-gate]
+
     OP[Authorized operator] -->|target + opt-in + exact host| RUN[load / stress / soak]
     RUN --> SUMMARY
 
+    CHANGE --> DOCS[README + workflow + guardrail contracts]
+    DOCS --> DG[Docs / static-contracts]
+
+    SAST[CodeQL] --> SG[Security / security-gate]
+    REPO[Trivy repository scan] --> SG
+    IMAGE[Trivy built-image scan] --> SG
+    REVIEW[Dependency Review when available] --> SG
+
+    CIG --> RESULT[Qualified repository change]
+    EG --> RESULT
+    DG --> RESULT
+    SG --> RESULT
+
     classDef entry fill:#ddf4ff,stroke:#0969da,color:#24292f,stroke-width:1.5px;
-    classDef core fill:#f6f8fa,stroke:#57606a,color:#24292f,stroke-width:1.5px;
-    classDef gate fill:#fbefff,stroke:#8250df,color:#24292f,stroke-width:1.5px;
+    classDef policy fill:#fbefff,stroke:#8250df,color:#24292f,stroke-width:1.5px;
+    classDef runtime fill:#fff8c5,stroke:#9a6700,color:#24292f,stroke-width:1.5px;
     classDef evidence fill:#dafbe1,stroke:#1a7f37,color:#24292f,stroke-width:1.5px;
+    classDef gate fill:#ffebe9,stroke:#cf222e,color:#24292f,stroke-width:1.5px;
     class CHANGE,OP entry;
-    class BUILD,GUARD,FIX,BIZ core;
-    class SAFE,SMOKE,EXT,L,ST,SO,RUN gate;
-    class ZERO,SUMMARY evidence;
+    class BUILD,GUARD,BIZ,EXT,DOCS policy;
+    class SAFE,FIX,SMOKE,L,ST,SO,RUN runtime;
+    class SUMMARY,ZERO,RESULT evidence;
+    class CIG,EG,DG,SAST,REPO,IMAGE,REVIEW,SG gate;
     linkStyle default stroke:#57606a,stroke-width:1.4px;
 ```
 
