@@ -26,9 +26,12 @@ updates:
     open-pull-requests-limit: 5
     allow:
       - dependency-name: "golang.org/x/crypto"
+      - dependency-name: "google.golang.org/grpc"
     groups:
       security-overrides:
-        patterns: ["golang.org/x/crypto"]
+        patterns:
+          - "golang.org/x/crypto"
+          - "google.golang.org/grpc"
         update-types: ["minor", "patch"]
     commit-message:
       prefix: "deps"
