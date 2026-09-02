@@ -209,6 +209,14 @@ def main() -> int:
             )
 
     text = README.read_text(encoding="utf-8")
+    for provenance_claim in (
+        "golang.org/x/crypto v0.55.0",
+        "google.golang.org/grpc v1.83.1",
+        "apk upgrade --no-cache",
+        "not claimed to be bit-for-bit reproducible from the Git commit alone",
+    ):
+        if provenance_claim not in text:
+            fail(f"README must document the packaged-runtime provenance boundary: {provenance_claim}", errors)
     validate_local_links(text, errors)
     validate_workflow_badges(text, errors)
     validate_badge_palette(text, errors)
