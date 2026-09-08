@@ -20,6 +20,13 @@ INDIRECT_BLOCK_REQUIRE_RE = re.compile(rf"^([^\s]+)\s+({VERSION})\s+//\s*indirec
 PIN_IMPORT_RE = re.compile(r'^\s*_\s+"([^"]+)"\s*$')
 EXPECTED_OVERRIDES = {"golang.org/x/crypto", "google.golang.org/grpc"}
 EXPECTED_PIN_IMPORTS = {"golang.org/x/crypto/cryptobyte", "google.golang.org/grpc/codes"}
+TRUST_STORE_COPY = (
+    "COPY --from=builder /etc/ssl/certs/ca-certificates.crt "
+    "/etc/ssl/certs/ca-certificates.crt"
+)
+RUNTIME_SECURITY_PATCH = """RUN apk add --no-cache \\
+    libcrypto3=3.5.8-r0 \\
+    libssl3=3.5.8-r0"""
 
 
 @dataclass(frozen=True)
@@ -74,8 +81,6 @@ def parse_overrides(text: str) -> OverrideManifest | None:
 
         match = indirect_match or direct_match
         if match is None:
-            # Fail closed on malformed requirements and unsupported go.mod directives
-            # such as replace/exclude/retract/tool/toolchain.
             return None
 
         module, version = match.groups()
@@ -139,6 +144,22 @@ def parse_pin_imports(text: str) -> set[str]:
     return {match.group(1) for line in text.splitlines() if (match := PIN_IMPORT_RE.fullmatch(line))}
 
 
+def final_runtime_stage(text: str, runtime_ref: str) -> str | None:
+    marker = f"FROM {runtime_ref} AS runtime"
+    if text.count(marker) != 1:
+        return None
+    return text.split(marker, 1)[1]
+
+
+def executable_docker_text(stage: str) -> str:
+    """Return Dockerfile stage text with comments and blank lines removed."""
+    return "\n".join(
+        line
+        for line in stage.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    )
+
+
 def main() -> int:
     text = DOCKERFILE.read_text(encoding="utf-8")
     errors: list[str] = []
@@ -186,6 +207,26 @@ def main() -> int:
         errors.append("Dockerfile builder must use a versioned digest-pinned golang Alpine image")
     if runtime is None or not re.match(r"^alpine:\d+\.\d+\.\d+@sha256:", runtime):
         errors.append("Dockerfile runtime must use a patch-versioned digest-pinned Alpine image")
+    else:
+        runtime_stage = final_runtime_stage(text, runtime)
+        if runtime_stage is None:
+            errors.append("Dockerfile must contain exactly one named final runtime stage")
+        else:
+            executable_runtime = executable_docker_text(runtime_stage)
+            if re.search(r"\bapk\s+(?:upgrade|update)\b", executable_runtime):
+                errors.append("final runtime stage must never run apk update or apk upgrade")
+            if executable_runtime.count("apk add") != 1 or RUNTIME_SECURITY_PATCH not in executable_runtime:
+                errors.append(
+                    "final runtime stage may install only exact libcrypto3=3.5.8-r0 and libssl3=3.5.8-r0 security patches"
+                )
+            if TRUST_STORE_COPY not in executable_runtime:
+                errors.append(
+                    "final runtime stage must copy the CA trust bundle from the digest-pinned builder stage"
+                )
+            if "RUN adduser -D -u 12345 -g 12345 k6" not in executable_runtime:
+                errors.append("final runtime stage must create the governed non-root k6 identity locally")
+            if not re.search(r"(?m)^USER 12345\s*$", executable_runtime):
+                errors.append("final runtime stage must execute as numeric user 12345")
 
     override_manifest: OverrideManifest | None = None
     if not SECURITY_OVERRIDE_MOD.is_file():
@@ -232,7 +273,7 @@ def main() -> int:
         "runtime provenance contract: "
         f"k6={version_match.group(1)} commit={commit_match.group(1)} stages={len(from_refs)} "
         f"overrides={override_summary} indirect={len(override_manifest.indirect)} "
-        "anchors=qualified vendor-sync=required immutable"
+        "anchors=qualified vendor-sync=required runtime-security-patches=libcrypto3-3.5.8-r0,libssl3-3.5.8-r0"
     )
     return 0
 
