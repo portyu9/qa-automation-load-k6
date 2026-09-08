@@ -151,6 +151,15 @@ def final_runtime_stage(text: str, runtime_ref: str) -> str | None:
     return text.split(marker, 1)[1]
 
 
+def executable_docker_text(stage: str) -> str:
+    """Return Dockerfile stage text with comments and blank lines removed."""
+    return "\n".join(
+        line
+        for line in stage.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    )
+
+
 def main() -> int:
     text = DOCKERFILE.read_text(encoding="utf-8")
     errors: list[str] = []
@@ -203,19 +212,20 @@ def main() -> int:
         if runtime_stage is None:
             errors.append("Dockerfile must contain exactly one named final runtime stage")
         else:
-            if re.search(r"\bapk\s+(?:upgrade|update)\b", runtime_stage):
+            executable_runtime = executable_docker_text(runtime_stage)
+            if re.search(r"\bapk\s+(?:upgrade|update)\b", executable_runtime):
                 errors.append("final runtime stage must never run apk update or apk upgrade")
-            if runtime_stage.count("apk add") != 1 or RUNTIME_SECURITY_PATCH not in runtime_stage:
+            if executable_runtime.count("apk add") != 1 or RUNTIME_SECURITY_PATCH not in executable_runtime:
                 errors.append(
                     "final runtime stage may install only exact libcrypto3=3.5.8-r0 and libssl3=3.5.8-r0 security patches"
                 )
-            if TRUST_STORE_COPY not in runtime_stage:
+            if TRUST_STORE_COPY not in executable_runtime:
                 errors.append(
                     "final runtime stage must copy the CA trust bundle from the digest-pinned builder stage"
                 )
-            if "RUN adduser -D -u 12345 -g 12345 k6" not in runtime_stage:
+            if "RUN adduser -D -u 12345 -g 12345 k6" not in executable_runtime:
                 errors.append("final runtime stage must create the governed non-root k6 identity locally")
-            if not re.search(r"(?m)^USER 12345\s*$", runtime_stage):
+            if not re.search(r"(?m)^USER 12345\s*$", executable_runtime):
                 errors.append("final runtime stage must execute as numeric user 12345")
 
     override_manifest: OverrideManifest | None = None
