@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -11,20 +12,46 @@ SECURITY_OVERRIDE_PINS = ROOT / "docker" / "security-overrides" / "pins.go"
 SHA256_RE = re.compile(r"@sha256:[0-9a-f]{64}$")
 K6_VERSION_RE = re.compile(r"^ARG K6_VERSION=([0-9]+\.[0-9]+\.[0-9]+)$", re.MULTILINE)
 K6_COMMIT_RE = re.compile(r"^ARG K6_COMMIT=([0-9a-f]{40})$", re.MULTILINE)
-REQUIRE_RE = re.compile(r"^require\s+([^\s]+)\s+(v\d+\.\d+\.\d+)\s*$")
-BLOCK_REQUIRE_RE = re.compile(r"^([^\s]+)\s+(v\d+\.\d+\.\d+)\s*$")
+VERSION = r"v\d+\.\d+\.\d+"
+REQUIRE_RE = re.compile(rf"^require\s+([^\s]+)\s+({VERSION})\s*$")
+INDIRECT_REQUIRE_RE = re.compile(rf"^require\s+([^\s]+)\s+({VERSION})\s+//\s*indirect\s*$")
+BLOCK_REQUIRE_RE = re.compile(rf"^([^\s]+)\s+({VERSION})\s*$")
+INDIRECT_BLOCK_REQUIRE_RE = re.compile(rf"^([^\s]+)\s+({VERSION})\s+//\s*indirect\s*$")
 PIN_IMPORT_RE = re.compile(r'^\s*_\s+"([^"]+)"\s*$')
 EXPECTED_OVERRIDES = {"golang.org/x/crypto", "google.golang.org/grpc"}
 EXPECTED_PIN_IMPORTS = {"golang.org/x/crypto/cryptobyte", "google.golang.org/grpc/codes"}
 
 
-def parse_overrides(text: str) -> dict[str, str] | None:
-    versions: dict[str, str] = {}
+@dataclass(frozen=True)
+class OverrideManifest:
+    """Direct override authority plus non-authoritative transitive metadata."""
+
+    direct: dict[str, str]
+    indirect: dict[str, str]
+
+
+def parse_overrides(text: str) -> OverrideManifest | None:
+    """Parse a constrained go.mod without promoting indirect modules to override authority."""
+    direct: dict[str, str] = {}
+    indirect: dict[str, str] = {}
     in_require_block = False
+    saw_module = False
+    saw_go = False
 
     for raw in text.splitlines():
         line = raw.strip()
-        if not line or line.startswith("//") or line.startswith("module ") or line.startswith("go "):
+        if not line or line.startswith("//"):
+            continue
+
+        if line.startswith("module "):
+            if in_require_block or saw_module or len(line.split()) != 2:
+                return None
+            saw_module = True
+            continue
+        if line.startswith("go "):
+            if in_require_block or saw_go or len(line.split()) != 2:
+                return None
+            saw_go = True
             continue
 
         if line == "require (":
@@ -38,14 +65,74 @@ def parse_overrides(text: str) -> dict[str, str] | None:
             in_require_block = False
             continue
 
-        match = BLOCK_REQUIRE_RE.fullmatch(line) if in_require_block else REQUIRE_RE.fullmatch(line)
-        if not match or match.group(1) in versions:
-            return None
-        versions[match.group(1)] = match.group(2)
+        if in_require_block:
+            indirect_match = INDIRECT_BLOCK_REQUIRE_RE.fullmatch(line)
+            direct_match = BLOCK_REQUIRE_RE.fullmatch(line)
+        else:
+            indirect_match = INDIRECT_REQUIRE_RE.fullmatch(line)
+            direct_match = REQUIRE_RE.fullmatch(line)
 
-    if in_require_block:
+        match = indirect_match or direct_match
+        if match is None:
+            # Fail closed on malformed requirements and unsupported go.mod directives
+            # such as replace/exclude/retract/tool/toolchain.
+            return None
+
+        module, version = match.groups()
+        if module in direct or module in indirect:
+            return None
+        if indirect_match is not None:
+            indirect[module] = version
+        else:
+            direct[module] = version
+
+    if in_require_block or not saw_module or not saw_go:
         return None
-    return versions if set(versions) == EXPECTED_OVERRIDES else None
+    if set(direct) != EXPECTED_OVERRIDES:
+        return None
+    return OverrideManifest(direct=direct, indirect=indirect)
+
+
+def parser_selfcheck() -> bool:
+    valid_with_indirect = """\
+module example.invalid/security-overrides
+
+go 1.26.0
+
+require (
+    golang.org/x/crypto v0.56.0
+    google.golang.org/grpc v1.83.2
+    golang.org/x/sys v0.47.0 // indirect
+)
+"""
+    parsed = parse_overrides(valid_with_indirect)
+    if parsed is None:
+        return False
+    if parsed.direct != {
+        "golang.org/x/crypto": "v0.56.0",
+        "google.golang.org/grpc": "v1.83.2",
+    }:
+        return False
+    if parsed.indirect != {"golang.org/x/sys": "v0.47.0"}:
+        return False
+
+    rejected = (
+        valid_with_indirect.replace(
+            "    golang.org/x/sys v0.47.0 // indirect",
+            "    golang.org/x/sys v0.47.0",
+        ),
+        valid_with_indirect.replace(
+            "    golang.org/x/sys v0.47.0 // indirect",
+            "    example.invalid/unapproved v1.2.3",
+        ),
+        valid_with_indirect.replace(
+            ")\n",
+            "    golang.org/x/crypto v0.56.0 // indirect\n)\n",
+        ),
+        valid_with_indirect + "replace golang.org/x/crypto => example.invalid/fork v0.56.0\n",
+        valid_with_indirect.replace("v0.47.0 // indirect", "v0.47 // indirect"),
+    )
+    return all(parse_overrides(candidate) is None for candidate in rejected)
 
 
 def parse_pin_imports(text: str) -> set[str]:
@@ -55,6 +142,9 @@ def parse_pin_imports(text: str) -> set[str]:
 def main() -> int:
     text = DOCKERFILE.read_text(encoding="utf-8")
     errors: list[str] = []
+
+    if not parser_selfcheck():
+        errors.append("security override parser self-check failed")
 
     version_match = K6_VERSION_RE.search(text)
     commit_match = K6_COMMIT_RE.search(text)
@@ -97,14 +187,15 @@ def main() -> int:
     if runtime is None or not re.match(r"^alpine:\d+\.\d+\.\d+@sha256:", runtime):
         errors.append("Dockerfile runtime must use a patch-versioned digest-pinned Alpine image")
 
-    overrides: dict[str, str] | None = None
+    override_manifest: OverrideManifest | None = None
     if not SECURITY_OVERRIDE_MOD.is_file():
         errors.append("docker/security-overrides/go.mod must track compiled Go-module security overrides")
     else:
-        overrides = parse_overrides(SECURITY_OVERRIDE_MOD.read_text(encoding="utf-8"))
-        if overrides is None:
+        override_manifest = parse_overrides(SECURITY_OVERRIDE_MOD.read_text(encoding="utf-8"))
+        if override_manifest is None:
             errors.append(
-                "security override module must contain exactly the allowlisted x/crypto and grpc semantic-version pins"
+                "security override module must contain exactly the allowlisted direct x/crypto and grpc "
+                "semantic-version pins; additional requirements are permitted only as valid // indirect metadata"
             )
 
     if not SECURITY_OVERRIDE_PINS.is_file():
@@ -132,11 +223,16 @@ def main() -> int:
             print(f"- {error}")
         return 1
 
-    override_summary = ",".join(f"{name}={overrides[name]}" for name in sorted(overrides))
+    if override_manifest is None or version_match is None or commit_match is None:
+        raise AssertionError("validated provenance state is incomplete")
+    override_summary = ",".join(
+        f"{name}={override_manifest.direct[name]}" for name in sorted(override_manifest.direct)
+    )
     print(
         "runtime provenance contract: "
         f"k6={version_match.group(1)} commit={commit_match.group(1)} stages={len(from_refs)} "
-        f"overrides={override_summary} anchors=qualified vendor-sync=required immutable"
+        f"overrides={override_summary} indirect={len(override_manifest.indirect)} "
+        "anchors=qualified vendor-sync=required immutable"
     )
     return 0
 
