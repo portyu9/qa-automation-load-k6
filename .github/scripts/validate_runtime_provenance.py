@@ -24,6 +24,9 @@ TRUST_STORE_COPY = (
     "COPY --from=builder /etc/ssl/certs/ca-certificates.crt "
     "/etc/ssl/certs/ca-certificates.crt"
 )
+RUNTIME_SECURITY_PATCH = """RUN apk add --no-cache \\
+    libcrypto3=3.5.8-r0 \\
+    libssl3=3.5.8-r0"""
 
 
 @dataclass(frozen=True)
@@ -200,9 +203,11 @@ def main() -> int:
         if runtime_stage is None:
             errors.append("Dockerfile must contain exactly one named final runtime stage")
         else:
-            if re.search(r"\bapk\s+(?:add|upgrade|update)\b", runtime_stage):
+            if re.search(r"\bapk\s+(?:upgrade|update)\b", runtime_stage):
+                errors.append("final runtime stage must never run apk update or apk upgrade")
+            if runtime_stage.count("apk add") != 1 or RUNTIME_SECURITY_PATCH not in runtime_stage:
                 errors.append(
-                    "final runtime stage must not mutate digest-pinned OS packages through live apk repositories"
+                    "final runtime stage may install only exact libcrypto3=3.5.8-r0 and libssl3=3.5.8-r0 security patches"
                 )
             if TRUST_STORE_COPY not in runtime_stage:
                 errors.append(
@@ -258,7 +263,7 @@ def main() -> int:
         "runtime provenance contract: "
         f"k6={version_match.group(1)} commit={commit_match.group(1)} stages={len(from_refs)} "
         f"overrides={override_summary} indirect={len(override_manifest.indirect)} "
-        "anchors=qualified vendor-sync=required final-os-packages=immutable"
+        "anchors=qualified vendor-sync=required runtime-security-patches=libcrypto3-3.5.8-r0,libssl3-3.5.8-r0"
     )
     return 0
 
