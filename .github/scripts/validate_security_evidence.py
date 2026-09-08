@@ -6,13 +6,12 @@ import json
 import re
 from pathlib import Path
 
+from validate_runtime_provenance import parse_overrides, parser_selfcheck
+
 ROOT = Path(__file__).resolve().parents[2]
 DOCKERFILE = ROOT / "docker" / "Dockerfile"
 SECURITY_OVERRIDE_MOD = ROOT / "docker" / "security-overrides" / "go.mod"
 TRIVY_VERSION = "0.74.0"
-REQUIRE_RE = re.compile(r"^require\s+([^\s]+)\s+(v\d+\.\d+\.\d+)\s*$")
-BLOCK_REQUIRE_RE = re.compile(r"^([^\s]+)\s+(v\d+\.\d+\.\d+)\s*$")
-EXPECTED_SECURITY_OVERRIDES = {"golang.org/x/crypto", "google.golang.org/grpc"}
 
 
 def load_report(path: Path) -> dict:
@@ -66,7 +65,11 @@ def validate_repository(report: dict) -> None:
 def docker_versions() -> tuple[str, str]:
     text = DOCKERFILE.read_text(encoding="utf-8")
     k6 = re.search(r"^ARG K6_VERSION=([0-9]+\.[0-9]+\.[0-9]+)$", text, re.MULTILINE)
-    go = re.search(r"^FROM --platform=\$BUILDPLATFORM golang:([0-9]+\.[0-9]+\.[0-9]+)-alpine", text, re.MULTILINE)
+    go = re.search(
+        r"^FROM --platform=\$BUILDPLATFORM golang:([0-9]+\.[0-9]+\.[0-9]+)-alpine",
+        text,
+        re.MULTILINE,
+    )
     if not k6 or not go:
         raise ValueError("unable to derive k6/Go versions from Dockerfile provenance")
     return k6.group(1), go.group(1)
@@ -75,38 +78,16 @@ def docker_versions() -> tuple[str, str]:
 def security_override_versions() -> dict[str, str]:
     if not SECURITY_OVERRIDE_MOD.is_file():
         raise ValueError("tracked Go security override module is missing")
-    versions: dict[str, str] = {}
-    in_require_block = False
-    for raw in SECURITY_OVERRIDE_MOD.read_text(encoding="utf-8").splitlines():
-        line = raw.strip()
-        if not line or line.startswith("//") or line.startswith("module ") or line.startswith("go "):
-            continue
-        if line == "require (":
-            if in_require_block:
-                raise ValueError("nested security override require block")
-            in_require_block = True
-            continue
-        if line == ")":
-            if not in_require_block:
-                raise ValueError("unexpected security override require-block terminator")
-            in_require_block = False
-            continue
-        match = BLOCK_REQUIRE_RE.fullmatch(line) if in_require_block else REQUIRE_RE.fullmatch(line)
-        if not match:
-            raise ValueError(f"unexpected security override module content: {line}")
-        name, version = match.groups()
-        if name not in EXPECTED_SECURITY_OVERRIDES:
-            raise ValueError(f"unexpected compiled security override dependency: {name}")
-        if name in versions:
-            raise ValueError(f"duplicate compiled security override dependency: {name}")
-        versions[name] = version
-    if in_require_block:
-        raise ValueError("unterminated security override require block")
-    if set(versions) != EXPECTED_SECURITY_OVERRIDES:
-        missing = sorted(EXPECTED_SECURITY_OVERRIDES - set(versions))
-        extra = sorted(set(versions) - EXPECTED_SECURITY_OVERRIDES)
-        raise ValueError(f"compiled security override set mismatch: missing={missing} extra={extra}")
-    return versions
+    if not parser_selfcheck():
+        raise ValueError("shared security override parser self-check failed")
+
+    manifest = parse_overrides(SECURITY_OVERRIDE_MOD.read_text(encoding="utf-8"))
+    if manifest is None:
+        raise ValueError(
+            "security override module must retain exactly the allowlisted direct x/crypto and grpc "
+            "semantic-version pins; additional requirements are permitted only as valid // indirect metadata"
+        )
+    return dict(manifest.direct)
 
 
 def package_map(result: dict) -> dict[str, set[str]]:
@@ -146,14 +127,20 @@ def validate_image(report: dict) -> None:
         and result.get("Type") == "gobinary"
     ]
     if len(os_results) != 1:
-        raise ValueError(f"built-image evidence must contain one Alpine OS package result; found {len(os_results)}")
+        raise ValueError(
+            f"built-image evidence must contain one Alpine OS package result; found {len(os_results)}"
+        )
     if len(go_results) != 1:
-        raise ValueError(f"built-image evidence must contain one usr/bin/k6 Go package result; found {len(go_results)}")
+        raise ValueError(
+            f"built-image evidence must contain one usr/bin/k6 Go package result; found {len(go_results)}"
+        )
 
     os_packages = os_results[0].get("Packages") or []
     go_packages = go_results[0].get("Packages") or []
     if len(os_packages) < 10:
-        raise ValueError(f"built-image Alpine package inventory is unexpectedly small: {len(os_packages)}")
+        raise ValueError(
+            f"built-image Alpine package inventory is unexpectedly small: {len(os_packages)}"
+        )
     if len(go_packages) < 50:
         raise ValueError(f"built-image Go package inventory is unexpectedly small: {len(go_packages)}")
 
@@ -169,7 +156,9 @@ def validate_image(report: dict) -> None:
             f"built-image Trivy gate contains HIGH/CRITICAL findings after a successful scan: {vulnerabilities}"
         )
 
-    override_summary = ",".join(f"{name}={version}" for name, version in sorted(overrides.items()))
+    override_summary = ",".join(
+        f"{name}={version}" for name, version in sorted(overrides.items())
+    )
     print(
         f"built-image Trivy evidence: version={TRIVY_VERSION} alpinePackages={len(os_packages)} "
         f"goPackages={len(go_packages)} k6=v{k6_version}+dirty go=v{go_version} "
