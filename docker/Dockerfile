@@ -49,9 +49,15 @@ FROM alpine:3.24.1@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6ee
 ARG K6_VERSION
 ARG K6_COMMIT
 
-# Keep the final OS package graph identical to the digest-pinned Alpine base.
-# The trust store is copied from the immutable builder stage instead of
-# reaching live Alpine repositories during the final image build.
+# Keep the final OS package graph governed. The base stays digest-pinned while
+# only the exact OpenSSL fixes required by the image vulnerability gate may be
+# overlaid; broad apk update/upgrade operations remain forbidden.
+RUN apk add --no-cache \
+    libcrypto3=3.5.8-r0 \
+    libssl3=3.5.8-r0
+
+# The trust store is copied from the digest-pinned builder stage rather than
+# installing a separate floating ca-certificates package in the runtime stage.
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 RUN adduser -D -u 12345 -g 12345 k6
 
