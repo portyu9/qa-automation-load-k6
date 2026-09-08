@@ -1,0 +1,53 @@
+name: audit-readme-sync
+
+on:
+  push:
+    branches:
+      - audit/synchronize-runtime-provenance-docs
+
+permissions:
+  contents: write
+
+jobs:
+  sync-readme:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: audit/synchronize-runtime-provenance-docs
+      - name: Synchronize packaged-runtime documentation
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path('README.md')
+          text = path.read_text(encoding='utf-8')
+
+          old_overrides = """Compiled dependency remediation is explicit rather than implicit. `docker/security-overrides/go.mod` allowlists exactly `golang.org/x/crypto v0.55.0` and `google.golang.org/grpc v1.83.1`; the Docker build applies each override to the ephemeral upstream checkout, verifies Go's selected module version, re-vendors the graph, and only then compiles k6. Security evidence independently requires those exact module versions in the produced binary inventory, so the release tag remains attributable while the reviewed security delta is visible."""
+          new_overrides = """Compiled dependency remediation is explicit rather than implicit. `docker/security-overrides/go.mod` allowlists exactly `golang.org/x/crypto v0.56.0` and `google.golang.org/grpc v1.83.2`; the Docker build applies each override to the ephemeral upstream checkout, verifies Go's selected module version, re-vendors the graph, and only then compiles k6. Security evidence independently requires those exact module versions in the produced binary inventory, so the release tag remains attributable while the reviewed security delta is visible."""
+
+          old_runtime = """The final Alpine **base identity** is digest-pinned, but its OS package set is intentionally security-refreshed with `apk upgrade --no-cache` during the build before the actual produced image is scanned. The repository therefore makes two different provenance claims: k6 source identity and compiled override selection are exact; Alpine package resolution is tied to the package repository state available at build time. The finished image is **not claimed to be bit-for-bit reproducible from the Git commit alone**. Built-image Trivy is the required attestation of the OS and Go-binary package state that actually shipped from that build."""
+          new_runtime = """The final Alpine **base identity** is digest-pinned, and broad `apk update` / `apk upgrade` operations are forbidden. The runtime stage may overlay only the exact security packages `libcrypto3=3.5.8-r0` and `libssl3=3.5.8-r0`, then copies its CA trust bundle from the digest-pinned builder stage before switching to numeric non-root user `12345`. The repository therefore keeps OS mutation bounded and reviewable rather than resolving a floating operating-system upgrade. The finished image is **not claimed to be bit-for-bit reproducible from the Git commit alone** because external source/package retrieval and build-tool behavior remain inputs; built-image Trivy is the required attestation of the OS and Go-binary package state that actually shipped from that build."""
+
+          if text.count(old_overrides) != 1:
+              raise SystemExit('expected exactly one stale compiled-override paragraph')
+          if text.count(old_runtime) != 1:
+              raise SystemExit('expected exactly one stale Alpine provenance paragraph')
+
+          text = text.replace(old_overrides, new_overrides).replace(old_runtime, new_runtime)
+          path.write_text(text, encoding='utf-8')
+      - name: Commit README only when changed
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          if git diff --quiet -- README.md; then
+            echo 'README already synchronized'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add README.md
+          git commit -m 'docs: synchronize k6 runtime provenance'
+          git push origin HEAD:audit/synchronize-runtime-provenance-docs
