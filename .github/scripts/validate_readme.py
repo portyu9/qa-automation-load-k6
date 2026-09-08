@@ -8,6 +8,8 @@ from urllib.parse import unquote
 
 ROOT = Path(__file__).resolve().parents[2]
 README = ROOT / "README.md"
+DOCKERFILE = ROOT / "docker" / "Dockerfile"
+SECURITY_OVERRIDE_MOD = ROOT / "docker" / "security-overrides" / "go.mod"
 LOCAL_LINK_RE = re.compile(r"(?<!!)\[[^\]]+\]\(([^)]+)\)")
 WORKFLOW_BADGE_RE = re.compile(
     r"https://github\.com/[^/]+/[^/]+/actions/workflows/([^/]+)/badge\.svg"
@@ -21,6 +23,9 @@ SECURITY_BADGE_RE = re.compile(
 MERMAID_RE = re.compile(r"```mermaid\s*\n(.*?)```", re.DOTALL)
 REPOSITORY_MAP_RE = re.compile(
     r"## Repository map\s*\n\s*```text\s*\n(.*?)```", re.DOTALL
+)
+DIRECT_OVERRIDE_RE = re.compile(
+    r"(?m)^\s*(golang\.org/x/crypto|google\.golang\.org/grpc)\s+(v\d+\.\d+\.\d+)\s*$"
 )
 MERMAID_ROOTS = (
     "flowchart",
@@ -157,6 +162,58 @@ def validate_stable_gates(text: str, errors: list[str]) -> None:
         validate_unfiltered_pull_request(workflow, errors)
 
 
+def validate_runtime_provenance_docs(text: str, errors: list[str]) -> None:
+    if not SECURITY_OVERRIDE_MOD.is_file():
+        fail("tracked Go security override manifest is missing", errors)
+        return
+    if not DOCKERFILE.is_file():
+        fail("tracked Docker runtime is missing", errors)
+        return
+
+    override_text = SECURITY_OVERRIDE_MOD.read_text(encoding="utf-8")
+    overrides = dict(DIRECT_OVERRIDE_RE.findall(override_text))
+    expected_modules = {"golang.org/x/crypto", "google.golang.org/grpc"}
+    if set(overrides) != expected_modules:
+        fail(
+            "README provenance validation requires exactly the governed x/crypto and gRPC direct overrides",
+            errors,
+        )
+    else:
+        for module in sorted(overrides):
+            claim = f"`{module} {overrides[module]}`"
+            if claim not in text:
+                fail(
+                    f"README packaged-runtime section must match tracked security override: {claim}",
+                    errors,
+                )
+
+    docker_text = DOCKERFILE.read_text(encoding="utf-8")
+    for package in ("libcrypto3", "libssl3"):
+        match = re.search(rf"\b{re.escape(package)}=([0-9][A-Za-z0-9.+_-]*)", docker_text)
+        if not match:
+            fail(f"Dockerfile does not expose an exact {package} runtime security patch", errors)
+            continue
+        claim = f"`{package}={match.group(1)}`"
+        if claim not in text:
+            fail(f"README packaged-runtime section must match tracked Alpine patch: {claim}", errors)
+
+    for claim in (
+        "broad `apk update` / `apk upgrade` operations are forbidden",
+        "numeric non-root user `12345`",
+        "not claimed to be bit-for-bit reproducible from the Git commit alone",
+    ):
+        if claim not in text:
+            fail(f"README must document the packaged-runtime provenance boundary: {claim}", errors)
+
+    stale_claims = (
+        "security-refreshed with `apk upgrade --no-cache`",
+        "Alpine package resolution is tied to the package repository state available at build time",
+    )
+    for stale in stale_claims:
+        if stale in text:
+            fail(f"README contains stale packaged-runtime provenance wording: {stale}", errors)
+
+
 def validate_execution_contracts(errors: list[str]) -> None:
     ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     extended = (ROOT / ".github" / "workflows" / "extended.yml").read_text(encoding="utf-8")
@@ -209,14 +266,7 @@ def main() -> int:
             )
 
     text = README.read_text(encoding="utf-8")
-    for provenance_claim in (
-        "golang.org/x/crypto v0.55.0",
-        "google.golang.org/grpc v1.83.1",
-        "apk upgrade --no-cache",
-        "not claimed to be bit-for-bit reproducible from the Git commit alone",
-    ):
-        if provenance_claim not in text:
-            fail(f"README must document the packaged-runtime provenance boundary: {provenance_claim}", errors)
+    validate_runtime_provenance_docs(text, errors)
     validate_local_links(text, errors)
     validate_workflow_badges(text, errors)
     validate_badge_palette(text, errors)
@@ -232,7 +282,7 @@ def main() -> int:
         return 1
 
     print(
-        "README contract: links, badges, Mermaid, directory-only map, stable gates, provenance, smoke evidence, and security attribution are consistent"
+        "README contract: links, badges, Mermaid, directory-only map, stable gates, manifest-backed provenance, smoke evidence, and security attribution are consistent"
     )
     return 0
 
