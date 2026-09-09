@@ -22,6 +22,16 @@ flowchart LR
     K6 --> TARGET2
     K6 --> SUM[lib/summary.js]
     SUM --> REPORT[reports/summary.json]
+
+    classDef entry fill:#DDF4FF,stroke:#0969DA,color:#24292F,stroke-width:1.5px;
+    classDef policy fill:#FBEFFF,stroke:#8250DF,color:#24292F,stroke-width:1.5px;
+    classDef runtime fill:#FFF8C5,stroke:#9A6700,color:#24292F,stroke-width:1.5px;
+    classDef evidence fill:#DAFBE1,stroke:#1A7F37,color:#24292F,stroke-width:1.5px;
+    class CI,OP,CLI entry;
+    class CFG,AUTH,CLASS,TH,CL,M policy;
+    class IMAGE,K6,FIXTURE,TARGET,TARGET2,TEST runtime;
+    class SUM,REPORT evidence;
+    linkStyle default stroke:#57606A,stroke-width:1.4px;
 ```
 
 Traffic generation remains native k6. Shared modules centralize policy but do not create a second load-test DSL. Required CI never depends on a public demonstration service.
@@ -73,9 +83,9 @@ Primary CI owns fixture lifecycle explicitly: start the Node process, poll `/hea
 
 `docker/Dockerfile` is the single repository-owned runtime/provenance source used by CI. Its digest-pinned official `grafana/k6:<version>` stage is an upstream release marker for Docker Dependabot; the executing binary is rebuilt from the exact `K6_VERSION` tag and `K6_COMMIT` with a digest-pinned patched Go toolchain. The build verifies that the fetched tag resolves to the committed source revision before compiling.
 
-CI derives the expected runtime version from the official release-marker `FROM` reference and compares it with the rebuilt image's `k6 version`. A Dependabot marker update therefore fails closed until the reviewed source version/commit are synchronized. The final Alpine runtime is separately pinned, updated during image construction, and scanned after build so OS fixes and vulnerabilities compiled into the Go binary are treated as distinct concerns.
+CI derives the expected runtime version from the official release-marker `FROM` reference and compares it with the rebuilt image's `k6 version`. A Dependabot marker update therefore fails closed until the reviewed source version/commit are synchronized. The final Alpine runtime is separately pinned and scanned after build so OS fixes and vulnerabilities compiled into the Go binary are treated as distinct concerns.
 
-The custom rebuild is deliberate: the official k6 image was built with a Go version that had fixed HIGH vulnerabilities, which an Alpine-only package upgrade could not remove. The produced image remains non-root and its default command is `k6 version`, so starting it without explicit `run ...` arguments generates **zero traffic**.
+The custom rebuild is deliberate: changing only Alpine packages cannot remediate vulnerabilities compiled into the k6 binary. The produced image remains non-root and its default command is `k6 version`, so starting it without explicit `run ...` arguments generates **zero traffic**.
 
 Extended `inspect` and primary smoke gates use the same tracked image. Guardrails, runtime-version verification, built-image Trivy, and exact source-revision verification make provenance drift a failing condition rather than a documentation convention.
 
@@ -89,91 +99,65 @@ Smoke is deliberately low-volume and does not require the sustained-load opt-in.
 
 This policy exists at multiple boundaries on purpose:
 
-- `scripts/run_k6.sh` rejects missing target ownership and provides early human-readable refusal for missing sustained opt-in/allowlist;
-- `lib/config.js` rejects unsafe or absent targets/correlation for any direct k6 invocation;
-- `requireLoadAuthorization()` enforces sustained authorization even when an operator bypasses the shell wrapper and invokes `k6 run` directly.
+- `scripts/run_k6.sh` rejects missing target ownership and provides early refusal for missing sustained opt-in/allowlist;
+- `lib/config.js` rejects unsafe or absent targets/correlation for any direct invocation;
+- `requireLoadAuthorization()` enforces sustained authorization even when an operator bypasses the shell wrapper.
 
 The environment flag and hostname allowlist are intent/safety guardrails. They are not proof of legal or operational authorization; target ownership, test windows, change control, and production safeguards remain external responsibilities.
 
 ## CI safety verification
 
-Primary CI has a dedicated `guardrails` job before smoke execution.
+Primary CI has a dedicated guardrail stage before smoke execution. The shell contract uses a stub k6 binary, so refusal behavior is tested with zero network traffic.
 
-The shell contract uses a stub `k6` binary, so refusal behavior is tested with zero network traffic. It proves:
+CI also invokes `k6 inspect` against sustained scenarios to prove initialization rejects missing authorization, target mismatch, unsafe URLs, and unsafe correlation input without executing the configured traffic scenario.
 
-- missing `K6_BASE_URL` is refused;
-- sustained profiles without `K6_ALLOW_LOAD_TEST=true` are refused;
-- sustained profiles without `K6_ALLOWED_HOSTS` are refused;
-- valid explicit target/authorization reaches the expected k6 command;
-- unsafe raw target material is not echoed before runtime validation.
-
-CI also invokes `k6 inspect` against the load scenario to prove JavaScript initialization rejects:
-
-- missing sustained-load opt-in;
-- a target hostname absent from the allowlist;
-- URL credentials;
-- query-bearing base URLs;
-- unsafe `K6_RUN_ID` correlation input.
-
-A matching allowlisted target with safe run identity must inspect successfully. `k6 inspect` evaluates scenario/options/module initialization without executing the configured traffic scenario, making it suitable for safety-policy verification.
-
-Only after the guardrail job passes does the smoke job start the repository-owned fixture and execute the three-iteration smoke profile.
+Only after guardrails pass does smoke start the repository fixture and execute the bounded smoke profile.
 
 ## Scenario model
 
 Scenario files own workload shape:
 
-- smoke → tiny shared-iteration correctness signal against an explicitly owned target;
-- load → ramping arrival rate around an expected service region;
-- stress → increasing arrival rates beyond normal operating expectations;
+- smoke → tiny shared-iteration correctness signal;
+- load → ramping arrival rate around expected service demand;
+- stress → increasing arrival rates beyond normal expectations;
 - soak → sustained constant arrival rate for time-dependent degradation.
 
-Arrival-rate executors describe requested throughput independently from virtual-user iteration speed. `preAllocatedVUs`/`maxVUs` are capacity to generate the requested schedule, not the performance objective itself.
+Arrival-rate executors describe requested throughput independently from virtual-user iteration speed. `preAllocatedVUs`/`maxVUs` are generator capacity, not the performance objective.
 
 ## Request/client boundary
 
 `lib/client.js` centralizes repeated HTTP behavior, request/run headers, endpoint tags, JSON/content-type checks, and custom metric updates. Scenario files should express user/traffic behavior rather than duplicate protocol boilerplate.
 
-The helper treats its explicit `endpoint` argument as authoritative. Optional caller tags are merged first, then the endpoint tag is applied so a caller cannot accidentally or deliberately overwrite the stable endpoint dimension used by metrics and thresholds.
+The helper treats its explicit `endpoint` argument as authoritative. Optional caller tags are merged first, then endpoint is applied so callers cannot overwrite the stable low-cardinality endpoint dimension used by metrics and thresholds.
 
-Do not hide k6's HTTP API behind a large generic abstraction. Shared client helpers should represent stable service operations or common measurement policy.
+Do not hide k6's HTTP API behind a large generic abstraction.
 
 ## Business metrics and thresholds
 
-Built-in request/check metrics are augmented by named business metrics:
+Built-in request/check metrics are augmented by:
 
 - `business_attempts` (`Counter`);
 - `business_success` (`Rate`);
 - `business_failures` (`Rate`);
 - `business_duration` (`Trend`).
 
-The client updates these from the same explicit endpoint/scenario tag set used by HTTP/check metrics. Business success is therefore a first-class threshold/evidence signal rather than inferred later from console text.
-
-`lib/thresholds.js` is the single source for common threshold expressions. Profiles can supply deliberate overrides, but a threshold change should be visibly separated from traffic-shape changes.
+The client updates these from the same endpoint/scenario tag set used by HTTP/check metrics. `lib/thresholds.js` remains the common threshold-policy source.
 
 Important distinctions:
 
-- a threshold is a pass/fail SLO/assertion;
-- a stage/rate defines generated traffic;
-- VU capacity determines whether k6 can sustain that arrival schedule;
-- `dropped_iterations` indicates generator capacity/scheduling shortfall and must not be confused with server request failure;
-- business success/failure metrics describe the application-level check outcome defined by the helper.
+- threshold = pass/fail objective;
+- stage/rate = requested traffic;
+- VU capacity = ability to generate schedule;
+- `dropped_iterations` = generator capacity/scheduling shortfall;
+- business metrics = application-level outcome defined by the helper.
 
 ## Summary evidence
 
-`handleSummary()` emits a compact stdout line plus `reports/summary.json` and text evidence. Structured evidence includes:
+`handleSummary()` emits compact stdout plus `reports/summary.json`. Structured evidence includes validated run/target identity, target class, request/error/latency/check headlines, business metrics, and explicit threshold breaches.
 
-- validated run ID;
-- target host and `targetClass`;
-- request totals/error rate/latency;
-- check rate;
-- business attempts/success/failures/duration;
-- allowlisted headline HTTP/check/business metric values;
-- explicit threshold-breach details.
+Threshold failures must be interpreted together with achieved volume and dropped iterations. A p95 breach at a materially different achieved throughput answers a different question than a p95 breach at the planned rate.
 
-Threshold failures should be interpreted together with achieved request volume and dropped iterations. A p95 breach at a materially different achieved throughput than intended answers a different question from a p95 breach at the planned rate.
-
-For required smoke CI, the target identity is the repository-owned loopback fixture. Sustained-run evidence must identify the explicitly approved target and run ID so service-side telemetry can be correlated independently.
+For required smoke CI, target identity is the repository loopback fixture. Sustained evidence must identify the approved target/run so service telemetry can be correlated independently.
 
 ## Failure-domain separation
 
@@ -182,7 +166,7 @@ For required smoke CI, the target identity is the repository-owned loopback fixt
 | Missing/unsafe `K6_BASE_URL` | Target configuration |
 | Unsafe `K6_RUN_ID` | Correlation/evidence identity |
 | Missing sustained opt-in/allowlist | Authorization guardrail |
-| Local fixture syntax/startup/readiness | Repository-owned smoke infrastructure |
+| Local fixture syntax/startup/readiness | Repository smoke infrastructure |
 | Docker version/default-command check | Packaged runtime ownership |
 | k6 module/inspect failure | Framework/profile initialization |
 | Smoke HTTP/content failure | Request/client contract or local fixture |
@@ -196,13 +180,13 @@ For required smoke CI, the target identity is the repository-owned loopback fixt
 New performance behavior should:
 
 1. require explicit target ownership before traffic;
-2. preserve the target validation/authorization/correlation boundary;
-3. keep required CI independent of public APIs and external-provider uptime;
-4. keep ordinary CI limited to repository-owned low-volume smoke plus zero-traffic guardrail validation;
-5. preserve the Dockerfile as the single tracked runtime/provenance source and keep its release marker, source pins, builder, and produced image coherent;
-6. choose an executor that matches the performance question;
-7. keep threshold policy centralized and reviewable;
-8. preserve authoritative low-cardinality endpoint/scenario tags;
-9. distinguish generator saturation (`dropped_iterations`) from service/business failures;
-10. write machine-readable summary evidence including target classification and business metrics;
+2. preserve target validation/authorization/correlation boundaries;
+3. keep required CI independent of public APIs/external uptime;
+4. keep ordinary CI limited to repository-owned low-volume smoke plus zero-traffic guardrails;
+5. preserve the Dockerfile as the single tracked runtime/provenance source;
+6. choose an executor matching the performance question;
+7. keep threshold policy centralized/reviewable;
+8. preserve authoritative low-cardinality tags;
+9. distinguish generator saturation from service/business failures;
+10. retain machine-readable summary evidence with target classification/business metrics;
 11. require explicit environment ownership/change control for sustained profiles.
