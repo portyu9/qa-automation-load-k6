@@ -31,7 +31,7 @@ A k6 performance quality-engineering framework for **smoke, load, stress, and so
 | Extended profiles | Validate load/stress/soak scenario and threshold configuration | **Zero sustained traffic** | Resolved inspect evidence |
 | Business metrics | Observe domain attempts/success/failure/duration | Same scenario traffic | Tagged custom metrics |
 | Sustained experiments | Evaluate load, degradation, or endurance | Explicit operator execution | k6 metrics + thresholds/context |
-| Security | Source, repository, runtime-image, dependency-change risk | No target traffic | CodeQL, Trivy, Dependency Review |
+| Security | Source, repository, runtime-image, dependency-change risk | No target traffic | CodeQL, Trivy, Dependency Review when available |
 | Documentation | README/workflow/governance contracts | No target traffic | Documentation status |
 
 ## Architecture
@@ -139,7 +139,7 @@ For runtime variables, workload models, metrics/threshold semantics, evidence in
 
 ## Packaged runtime provenance
 
-[`docker/Dockerfile`](docker/Dockerfile) is the single tracked runtime source. The executing k6 binary is rebuilt from reviewed source identity and the governed security overrides `golang.org/x/crypto v0.56.0` and `google.golang.org/grpc v1.83.2`.
+[`docker/Dockerfile`](docker/Dockerfile) is the single tracked runtime source. The executing k6 binary is rebuilt from reviewed source identity and the governed security overrides `golang.org/x/crypto v0.57.0` and `google.golang.org/grpc v1.83.2`.
 
 The final runtime overlays only the exact Alpine security packages `libcrypto3=3.5.8-r0` and `libssl3=3.5.8-r0`; broad `apk update` / `apk upgrade` operations are forbidden. The image runs as numeric non-root user `12345`.
 
