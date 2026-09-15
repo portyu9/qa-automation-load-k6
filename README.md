@@ -31,7 +31,7 @@ A k6 performance quality-engineering framework for **smoke, load, stress, and so
 | Extended profiles | Validate load/stress/soak scenario and threshold configuration | **Zero sustained traffic** | Resolved inspect evidence |
 | Business metrics | Observe domain attempts/success/failure/duration | Same scenario traffic | Tagged custom metrics |
 | Sustained experiments | Evaluate load, degradation, or endurance | Explicit operator execution | k6 metrics + thresholds/context |
-| Security | Source, repository, runtime-image, dependency-change risk | No target traffic | CodeQL, Trivy, Dependency Review when available |
+| Security | Source, repository, runtime-image, dependency-change risk | No target traffic | CodeQL, Trivy, Dependency Review |
 | Documentation | README/workflow/governance contracts | No target traffic | Documentation status |
 
 ## Architecture
