@@ -139,7 +139,7 @@ For runtime variables, workload models, metrics/threshold semantics, evidence in
 
 ## Packaged runtime provenance
 
-[`docker/Dockerfile`](docker/Dockerfile) is the single tracked runtime source. The executing k6 binary is rebuilt from reviewed source identity and the governed security overrides `golang.org/x/crypto v0.56.0` and `google.golang.org/grpc v1.83.2`.
+[`docker/Dockerfile`](docker/Dockerfile) is the single tracked runtime source. The executing k6 binary is rebuilt from reviewed source identity and the governed security overrides `golang.org/x/crypto v0.57.0` and `google.golang.org/grpc v1.83.2`.
 
 The final runtime overlays only the exact Alpine security packages `libcrypto3=3.5.8-r0` and `libssl3=3.5.8-r0`; broad `apk update` / `apk upgrade` operations are forbidden. The image runs as numeric non-root user `12345`.
 
