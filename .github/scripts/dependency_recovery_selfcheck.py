@@ -203,6 +203,16 @@ class RecoverySelfCheck(unittest.TestCase):
             "Require applicable security domains",
         ):
             self.assertNotIn(forbidden, RECOVERY["transientSteps"])
+        for attempts in (1, 3, 4):
+            self.assertTrue(
+                validate_recovery_config({**RECOVERY, "maxRunAttempts": attempts}),
+                f"maxRunAttempts={attempts} must be rejected",
+            )
+        expanded = {
+            **RECOVERY,
+            "transientSteps": [*RECOVERY["transientSteps"], "Download future k6 runtime"],
+        }
+        self.assertTrue(validate_recovery_config(expanded))
 
     def test_signature_model_is_narrow_and_missing_artifacts_block(self) -> None:
         self.assertEqual(matching_transient_signatures("HTTP 503"), ["http-5xx"])
