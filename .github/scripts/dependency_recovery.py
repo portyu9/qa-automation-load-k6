@@ -105,6 +105,13 @@ NEVER_RECOVER_STEPS = {
     "Require applicable security domains",
 }
 
+SAFE_TRANSIENT_STEPS = {
+    "Upload k6 summary",
+    "Upload extended evidence",
+    "Upload repository security evidence",
+    "Upload container security evidence",
+}
+
 
 def _parse_timestamp(value: Any) -> datetime | None:
     if not isinstance(value, str) or not value:
@@ -134,8 +141,8 @@ def validate_recovery_config(config: dict[str, Any]) -> list[str]:
     if not isinstance(config.get("enabled"), bool):
         errors.append("enabled must be boolean")
     attempts = config.get("maxRunAttempts")
-    if not isinstance(attempts, int) or not 1 <= attempts <= 3:
-        errors.append("maxRunAttempts must be an integer from 1 to 3")
+    if attempts != 2:
+        errors.append("maxRunAttempts must equal 2")
     steps = config.get("transientSteps")
     if not isinstance(steps, list) or not steps:
         errors.append("transientSteps must be a non-empty array")
@@ -144,6 +151,9 @@ def validate_recovery_config(config: dict[str, Any]) -> list[str]:
             errors.append("every transientSteps entry must be a non-empty string")
         if len(set(steps)) != len(steps):
             errors.append("transientSteps must not contain duplicates")
+        for step in steps:
+            if step not in SAFE_TRANSIENT_STEPS:
+                errors.append(f"{step} is not in the code-owned recovery allowlist")
         for forbidden in sorted(NEVER_RECOVER_STEPS):
             if forbidden in steps:
                 errors.append(f"{forbidden} must never be eligible for automatic recovery")
