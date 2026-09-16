@@ -2,6 +2,7 @@ version: 2
 updates:
   - package-ecosystem: docker
     directory: "/docker"
+    rebase-strategy: auto
     schedule:
       interval: weekly
       day: monday
@@ -18,6 +19,7 @@ updates:
 
   - package-ecosystem: gomod
     directory: "/docker/security-overrides"
+    rebase-strategy: auto
     schedule:
       interval: weekly
       day: monday
@@ -39,6 +41,7 @@ updates:
 
   - package-ecosystem: github-actions
     directory: "/"
+    rebase-strategy: auto
     schedule:
       interval: weekly
       day: monday
