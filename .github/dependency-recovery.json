@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "enabled": true,
+  "maxRunAttempts": 2,
+  "transientSteps": [
+    "Upload k6 summary",
+    "Upload extended evidence",
+    "Upload repository security evidence",
+    "Upload container security evidence"
+  ]
+}
